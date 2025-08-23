@@ -1,0 +1,15 @@
+# venv & Python cache
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.DS_Store
+
+# notebooks & data
+.ipynb_checkpoints/
+data/*
+
+# IDE
+.vscode/
+.idea/
