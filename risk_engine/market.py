@@ -119,3 +119,60 @@ def backtest_var_historical(returns: pd.DataFrame, weights: np.ndarray,
         "kupiec_LR": LR,
         "kupiec_pvalue": pval,
     }
+
+import numpy as np
+
+def _cov_shrink(cov: np.ndarray, lam: float = 0.01) -> np.ndarray:
+    """
+    Tiny shrinkage toward diagonal to avoid near-singulaer coveriences.
+    cov_s = (1-lam) * cov + lam * diag(diag(cov))
+    
+    """
+    d = np.diag(np.diag(cov))
+    return (1-lam) * cov + lam * d
+
+def var_es_monte_carlo(returns: pd.DataFrame, weights: np.ndarray, alpha: float = 0.95, horizon_days: int = 1, exposure: float = 1.0 , n_sims: int = 100_000, seed: int | None = 42 , shrink_lambda: float = 0.01) -> tuple[float, float]:
+    """
+    Monte-Carlo VaR & ES via multivariate normal using sample μ, Σ.
+    Returns  (VaR, ES) as +ve loss amounts.
+    
+    Notes:
+    - Adds light covariance shrinkage for stability.
+    - Scales μ by horizon_days, Σ by horizon_days.
+    """
+    rng = np.random.default_rng(seed)
+    mu = returns.mean().values * horizon_days
+    cov = returns.cov().values * horizon_days
+    cov = _cov_shrink(cov, lam = shrink_lambda)
+    
+    sims = rng.multivariate_normal(mu, cov, size=int(n_sims), methods="cholesky")
+    port = sims @ weights  #simulates portfolio returns for the horizon
+    
+    # VaR threshold is the (1 - alpha) lower-tail quantile of returns
+    q = np.quantile(port, 1 - alpha)
+    var_loss = float(-q * exposure)
+    
+    # ES = mean of returns <= quantile; report as +ve loss
+    tail = port[port <= q]
+    es_loss = float(-tail.mean() * exposure) if tail.size else var_loss
+    return var_loss, es_loss
+def mc_portfolio_loss_from_mu_cov(
+    mu: np.ndarray,
+    cov: np.ndarray,
+    weights: np.ndarray,
+    alpha: float = 0.95,
+    exposure: float = 1.0,
+    n_sims: int = 50_000,
+    seed: int | None = 42,
+) -> tuple[float, float]:
+    """
+    Monte Carlo VaR & ES (losses) for a given μ, Σ (already at the chosen horizon).
+    """
+    rng = np.random.default_rng(seed)
+    sims = rng.multivariate_normal(mu, cov, size=int(n_sims), method="cholesky")
+    port = sims @ weights
+    q = np.quantile(port, 1 - alpha)
+    var_loss = float(-q * exposure)
+    tail = port[port <= q]
+    es_loss = float(-tail.mean() * exposure) if tail.size else var_loss
+    return var_loss, es_loss
