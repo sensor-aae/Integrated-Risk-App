@@ -4,11 +4,9 @@ import streamlit as st
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
-
-# Prefer: `pip install -e .` from repo root so imports work without path hacks.
-# If you still need it during development, uncomment:
-# import sys; sys.path.append(str(Path(__file__).resolve().parents[1]))
-
+from pathlib import Path
+import sys
+sys.path.append(str(Path(__file__).resolve().parents[1]))
 from risk_engine.data import load_prices, to_returns
 from risk_engine.market import (
     var_parametric, es_parametric,
