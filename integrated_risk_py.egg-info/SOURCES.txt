@@ -9,3 +9,5 @@ risk_engine/__init__.py
 risk_engine/credit.py
 risk_engine/data.py
 risk_engine/market.py
+risk_engine/scenarios.py
+risk_engine/stress.py
