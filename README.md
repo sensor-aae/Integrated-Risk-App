@@ -8,7 +8,7 @@ Interactive Streamlit app for market & credit risk:
 - Credit: Expected Loss (batch)
 - Risk Budgeting: Equal Risk Contribution (ERC)
 
-**Live Demo:** <YOUR_APP_URL>
+**Live Demo:** <APP_URL>
 
 > Source code is private; **available on request**.
 
