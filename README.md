@@ -8,11 +8,9 @@ Interactive Streamlit app for market & credit risk:
 - Credit: Expected Loss (batch)
 - Risk Budgeting: Equal Risk Contribution (ERC)
 
-**Live Demo:** <APP_URL>
+**Live Demo:** <https://integrated-risk-app.onrender.com/>
 
-> Source code is private; **available on request**.
-
-## Quickstart (local)
+## ⚡ Quickstart (local)
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
