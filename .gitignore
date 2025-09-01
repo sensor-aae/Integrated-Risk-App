@@ -1,15 +1,19 @@
-# venv & Python cache
-.venv/
+# Python
 __pycache__/
 *.pyc
 *.pyo
-*.pyd
-*.DS_Store
 
-# notebooks & data
+# Virtual envs
+.venv/
+.env
+
+# Notebooks
 .ipynb_checkpoints/
-data/*
 
-# IDE
-.vscode/
-.idea/
+# OS/editor
+.DS_Store
+
+# Data: keep only demo CSVs
+data/*
+!data/market_data.csv
+!data/credit_example.csv
