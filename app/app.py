@@ -37,14 +37,14 @@ st.set_page_config(page_title="Risk App", layout="wide")
 st.title("Integrated Risk App (Python)")
 
 # ---------------- SIDEBAR (unchanged controls) ----------------
-st.sidebar.header("2) Portfolio")
+st.sidebar.header("1) Portfolio")
 ret_method = st.sidebar.selectbox("Return type", ["log", "simple"], index=0)
 weights_mode = st.sidebar.selectbox("Weights", ["Equal", "Manual by column name"])
 alpha = st.sidebar.slider("Confidence (α)", 0.80, 0.999, 0.95, 0.001)
 horizon = st.sidebar.number_input("Horizon (days)", 1, 30, 1)
 exposure = st.sidebar.number_input("Exposure", 0.0, 1e12, 1_000_000.0, step=1000.0)
 
-st.sidebar.header("3) Method")
+st.sidebar.header("2) Method")
 method_choice = st.sidebar.radio(
     "Method",
     ["Historical", "Parametric (Normal)", "Monte Carlo", "Filtered Historical (GARCH-lite)"],
@@ -63,7 +63,7 @@ if method_choice == "Filtered Historical (GARCH-lite)":
     alpha_g = st.sidebar.number_input("GARCH α (ARCH)", min_value=0.0, max_value=0.5, value=0.05, step=0.01)
     beta_g  = st.sidebar.number_input("GARCH β (GARCH)", min_value=0.0, max_value=0.999, value=0.94, step=0.01)
 
-st.sidebar.header("4) Backtest")
+st.sidebar.header("3) Backtest")
 bt_window = st.sidebar.number_input("Rolling window (days)", min_value=50, value=250, step=10)
 
 # ---------------- MARKET DATA INPUT (moved from sidebar) ----------------
