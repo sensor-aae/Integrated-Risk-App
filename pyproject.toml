@@ -1,14 +1,23 @@
-[project]
-name = "integrated-risk-py"
-version = "0.1.0"
-description = "Integrated risk model in Python"
-readme = "README.md"
-requires-python = ">=3.10"
-dependencies = ["pandas", "numpy", "scipy", "plotly", "streamlit"]
-
 [build-system]
-requires = ["setuptools"]
+requires = ["setuptools>=67", "wheel"]
 build-backend = "setuptools.build_meta"
 
+[project]
+name = "integrated-risk-app"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+  "streamlit",
+  "pandas",
+  "numpy",
+  "plotly",
+  "yfinance",
+  "scipy",
+  "statsmodels",
+  "matplotlib",
+  "pytest"
+]
+
 [tool.setuptools.packages.find]
+where = ["."]
 include = ["risk_engine*"]
