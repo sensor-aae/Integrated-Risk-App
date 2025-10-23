@@ -17,14 +17,16 @@ def _find_col(df: pd.DataFrame, aliases: List[str]) -> Optional[str]:
     return None
 
 def _to_decimal_if_percent(s: pd.Series) -> pd.Series:
-    """If values look like percentages (max between 1 and 100), divide by 100."""
-    s_clean = s.dropna()
-    if s_clean.empty:
-        return s
-    mx = float(s_clean.max())
-    if 1.0 < mx <= 100.0:
-        return s / 100.0
-    return s
+    """
+    Convert only entries that look like percentages (>1 and <=100) to decimals.
+    Leave already-decimal entries (0..1) unchanged.
+    Also tolerates None/NaN safely.
+    """
+    s_num = pd.to_numeric(s, errors="coerce")
+    out = s_num.copy()
+    mask = (out > 1.0) & (out <= 100.0)
+    out.loc[mask] = out.loc[mask] / 100.0
+    return out
 
 def _safe_div(n: pd.Series, d: pd.Series) -> pd.Series:
     out = pd.Series(np.zeros(len(n)), index=n.index, dtype=float)
