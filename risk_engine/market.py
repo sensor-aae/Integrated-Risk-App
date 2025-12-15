@@ -7,6 +7,11 @@ from typing import Tuple
 
 
 # -------- Core helpers --------
+def _normalize_weights(w: np.ndarray) -> np.ndarray:
+    """Normalize weights to sum to 1 (safe if sum is 0)."""
+    s = float(np.sum(w))
+    return (w / s) if s != 0 else w
+
 def portfolio_returns(returns: pd.DataFrame, weights: np.ndarray) -> pd.Series:
     """Project multivariate return matrix onto portfolio weights."""
     return pd.Series(returns.values @ weights, index=returns.index, name="r_p")
@@ -121,7 +126,6 @@ def backtest_var_historical(returns: pd.DataFrame, weights: np.ndarray,
         "kupiec_pvalue": pval,
     }
 
-import numpy as np
 
 def _cov_shrink(cov: np.ndarray, lam: float = 0.01) -> np.ndarray:
     """
@@ -324,7 +328,7 @@ def backtest_fhs_var(
         "hit_rate": hit_rate,
     }
     
-    _N = NormalDist()
+    
 
 def normalize_weights(w: np.ndarray) -> np.ndarray:
     s = float(np.sum(w))
@@ -388,9 +392,6 @@ def incremental_var_normal(
 
 # ---------- Risk Parity (Equal Risk Contribution) ----------
 
-def _normalize_weights(w: np.ndarray) -> np.ndarray:
-    s = float(np.sum(w))
-    return (w / s) if s != 0 else w
 
 def erc_weights_from_cov(
     cov: np.ndarray,
