@@ -31,6 +31,9 @@ from risk_engine.stress import (
 )
 from risk_engine.credit import compute_el_table, summarize_el
 from risk_engine.scenarios import scenario_equities_shock, scenario_rates_bp, scenario_corr_bump_mc
+from risklib.market.backtest import backtest_var_historical
+
+
 
 @st.cache_data(show_spinner=False)
 def _cov_and_mu(returns: pd.DataFrame, horizon: int):
@@ -153,26 +156,47 @@ else:
     st.info("Load market data to compute risk measures.")
 
 # ---------------- MARKET: BACKTEST (Historical VaR) ----------------
-if has_market:
+if has_market and returns is not None and not returns.empty:
     st.subheader("Backtest — Rolling Historical VaR (1d)")
+
     available = len(returns)
     if available <= bt_window:
         st.warning(
             f"Not enough data for backtest: have {available} return rows, window is {bt_window}."
         )
     else:
-        bt = backtest_var_historical(returns, weights, alpha=alpha, window=int(bt_window))
+        bt = backtest_var_historical(
+            returns=returns,
+            weights=weights,
+            alpha=alpha,
+            window=int(bt_window)
+        )
 
-        left, right = st.columns([2,1])
+        left, right = st.columns([2, 1])
+
         with left:
             fig = go.Figure()
-            fig.add_trace(go.Scatter(x=bt["r_p"].index, y=bt["r_p"].values, mode="lines", name="Portfolio returns"))
-            fig.add_trace(go.Scatter(x=bt["VaR_threshold"].index, y=bt["VaR_threshold"].values, mode="lines",
-                                     name=f"VaR threshold ({int(alpha*100)}%)"))
+            fig.add_trace(go.Scatter(
+                x=bt["r_p"].index, y=bt["r_p"].values,
+                mode="lines", name="Portfolio returns"
+            ))
+            fig.add_trace(go.Scatter(
+                x=bt["VaR_threshold"].index, y=bt["VaR_threshold"].values,
+                mode="lines", name=f"VaR threshold ({int(alpha*100)}%)"
+            ))
+
             exc_mask = (bt["exceptions"] == 1) & bt["VaR_threshold"].notna()
-            fig.add_trace(go.Scatter(x=bt["r_p"].index[exc_mask], y=bt["r_p"].values[exc_mask],
-                                     mode="markers", name="Exceptions"))
-            fig.update_layout(height=420, xaxis_title="Date", yaxis_title="Return")
+            fig.add_trace(go.Scatter(
+                x=bt["r_p"].index[exc_mask],
+                y=bt["r_p"].values[exc_mask],
+                mode="markers", name="Exceptions"
+            ))
+
+            fig.update_layout(
+                height=420,
+                xaxis_title="Date",
+                yaxis_title="Return"
+            )
             st.plotly_chart(fig, use_container_width=True)
 
         with right:
@@ -183,7 +207,7 @@ if has_market:
             st.write(f"Hit rate (x/T): **{bt['hit_rate']:.4f}**")
             st.write(f"LR statistic: **{bt['kupiec_LR']:.3f}**")
             st.write(f"p-value: **{bt['kupiec_pvalue']:.4f}**")
-            st.caption("H₀: Actual exception rate equals (1 − α). Large LR / small p rejects H₀.")
+            st.caption("H₀: Actual exception rate equals (1 − α).")
 
         ex_df = pd.DataFrame({
             "date": bt["r_p"].index,
@@ -191,33 +215,13 @@ if has_market:
             "VaR_threshold": bt["VaR_threshold"].values,
             "exception": bt["exceptions"].values
         })
+
         st.download_button(
             "Download backtest series (CSV)",
             data=ex_df.to_csv(index=False).encode("utf-8"),
             file_name=f"backtest_{int(alpha*100)}pct_window{bt_window}.csv",
             mime="text/csv"
         )
-
-# ---------------- MARKET: FHS BACKTEST ----------------
-if has_market and method_choice == "Filtered Historical (GARCH-lite)":
-    st.subheader("Backtest — FHS VaR (1d) with GARCH-lite")
-    bt_fhs = backtest_fhs_var(returns, weights, alpha=alpha, window_min=250,
-                              alpha_g=float(alpha_g), beta_g=float(beta_g))
-    fig2 = go.Figure()
-    fig2.add_trace(go.Scatter(x=bt_fhs["r_p"].index, y=bt_fhs["r_p"].values, mode="lines", name="Portfolio returns"))
-    fig2.add_trace(go.Scatter(x=bt_fhs["VaR_FHS"].index, y=bt_fhs["VaR_FHS"].values, mode="lines",
-                              name=f"FHS VaR ({int(alpha*100)}%)"))
-    exc = (bt_fhs["exceptions"] == 1) & bt_fhs["VaR_FHS"].notna()
-    fig2.add_trace(go.Scatter(x=bt_fhs["r_p"].index[exc], y=bt_fhs["r_p"].values[exc],
-                              mode="markers", name="Exceptions"))
-    fig2.update_layout(height=420, xaxis_title="Date", yaxis_title="Return")
-    st.plotly_chart(fig2, use_container_width=True)
-
-    c1, c2, c3 = st.columns(3)
-    c1.metric("OOS points (T)", f"{bt_fhs['T']}")
-    c2.metric("Exceedances (x)", f"{bt_fhs['exceedances']}")
-    c3.metric("Hit rate", f"{(bt_fhs['hit_rate']*100):.2f}%")
-    st.caption("Expectation for hit rate is ≈ (1 − α).")
 
 # ---------------- MARKET: STRESS TESTING ----------------
 if has_market:
