@@ -1,4 +1,10 @@
 # app/app.py
+"""
+UI RULE:
+- This file must not compute VaR/ES/EL directly.
+- It may only call risklib models/backtests and visualize the outputs.
+- If risk math is needed, implement it in risklib/ and import it here.
+"""
 from pathlib import Path
 import sys
 sys.path.append(str(Path(__file__).resolve().parents[1]))
@@ -115,29 +121,36 @@ if has_market:
             weights = weights / s
 
 # ---------------- MARKET: POINT MEASURES ----------------
-if has_market:
+if has_market and returns is not None and not returns.empty:
     st.subheader("Point Risk Measures")
-    if method_choice == "Historical":
-        var_val = var_historical(returns, weights, alpha=alpha, horizon_days=horizon, exposure=exposure)
-        es_val  = es_historical(returns, weights, alpha=alpha, horizon_days=horizon, exposure=exposure)
-    elif method_choice == "Parametric (Normal)":
-        var_val = var_parametric(returns, weights, alpha=alpha, horizon_days=horizon, exposure=exposure)
-        es_val  = es_parametric(returns, weights, alpha=alpha, horizon_days=horizon, exposure=exposure)
-    elif method_choice == "Monte Carlo":
-        var_val, es_val = var_es_monte_carlo(
-            returns, weights, alpha=alpha, horizon_days=horizon,
-            exposure=exposure, n_sims=int(n_sims), seed=int(seed), shrink_lambda=float(shrink)
-        )
-    else:  # GARCH-lite
-        var_val, es_val = fhs_var_es_next(
-            returns, weights, alpha=alpha, exposure=exposure,
-            alpha_g=float(alpha_g), beta_g=float(beta_g)
-        )
+
+    method_map = {
+        "Historical": "historical",
+        "Parametric (Normal)": "parametric",
+        "Monte Carlo": "monte_carlo",
+        "GARCH-lite": "fhs",
+    }
+
+    cfg = MarketRiskConfig(
+        alpha=alpha,
+        method=method_map.get(method_choice, "historical"),
+        horizon_days=horizon,
+        exposure=exposure,
+    )
+
+    model = MarketRiskModel(returns, weights, cfg)
+    model.fit()
+
+    var_val = model.compute_var()
+    es_val = model.compute_es()
 
     c1, c2 = st.columns(2)
     c1.metric(f"VaR @ {int(alpha*100)}%, {horizon}d", f"{var_val:,.0f}")
     c2.metric("Expected Shortfall (ES)", f"{es_val:,.0f}")
     st.caption("VaR/ES are reported as loss amounts (positive numbers).")
+
+else:
+    st.info("Load market data to compute risk measures.")
 
 # ---------------- MARKET: BACKTEST (Historical VaR) ----------------
 if has_market:
