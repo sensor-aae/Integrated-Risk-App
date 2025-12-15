@@ -1,137 +1,214 @@
-# Integrated Risk App (Python)
+Integrated Risk App (Python)
 
-**Model Risk Validation Sandbox for Market & Credit Risk (Python)**
+Validation-Grade Market & Credit Risk Engine
 
-This project is a **model-risk–oriented risk analytics engine** designed to measure, validate, and document market and credit risk models in a manner consistent with institutional risk management and model validation practices.
+🎯 Project Objective (North Star)
 
-The focus is not on building a dashboard, but on demonstrating rigorous risk modeling, backtesting, and governance-aware design, with clear assumptions, diagnostics, and limitations.
+This project is a model-risk–oriented risk analytics engine designed to measure, validate, and document market and credit risk models in a manner consistent with institutional risk management and model validation practices.
 
----
+The objective is not to build a trading system or a dashboard-centric application, but to demonstrate:
 
-## 🎯 Project Objective (North Star)
+Sound quantitative risk methodology
 
-Build a **validation-ready risk engine** that computes core risk measures (VaR, ES, Expected Loss) and evaluates their reliability using standard model risk diagnostics.
+Explicit assumptions and loss conventions
 
-This repository is structured to resemble how **pensions, model risk teams, and risk consultancies** organize and review quantitative risk models.
+Clear separation between model logic, configuration, and presentation
 
----
+Standard validation and backtesting diagnostics
 
-## 📌 Scope (What This Project Intentionally Covers)
+This repository functions as a model risk validation sandbox.
 
-### Market Risk
+📌 Scope (What This Project Covers)
+Market Risk
 
-- Value-at-Risk (VaR) and Expected Shortfall (ES)
-- Methods:
-  - Historical Simulation
-  - Parametric (Normal)
-  - Monte Carlo
-  - Filtered Historical (GARCH-lite)
-- Rolling window estimation
-- Backtesting using **Kupiec Proportion-of-Failures (POF) test**
-- Multi-confidence-level calibration (e.g. 95%, 99%)
+Value-at-Risk (VaR) and Expected Shortfall (ES)
 
-### Credit Risk
+Supported methodologies:
 
-- Expected Loss (EL) framework:
-  - Probability of Default (PD)
-  - Loss Given Default (LGD)
-  - Exposure at Default (EAD)
-- Batch portfolio-level aggregation
-- Segment-level loss breakdown for monitoring
+Historical Simulation
 
-### Stress & Scenario Analysis
+Parametric (Normal)
 
-- Deterministic equity shocks
-- Interest-rate shocks using duration approximations
-- Correlation stress
-- Historical window replay
+Monte Carlo (multivariate normal with covariance shrinkage)
 
----
+Filtered Historical Simulation (GARCH-lite)
 
-## 🚫 Out of Scope (By Design)
+Multi-confidence-level analysis (e.g. 95%, 99%)
 
-To preserve clarity and rigor, this project does **not** attempt to be:
+Rolling-window estimation
 
-- A trading or portfolio optimization system
-- A real-time production risk engine
-- A regulatory-approved model
+Out-of-sample backtesting using Kupiec Proportion-of-Failures (POF)
+
+Credit Risk
+
+Expected Loss (EL) framework:
+
+Probability of Default (PD)
+
+Loss Given Default (LGD)
+
+Exposure at Default (EAD)
+
+Portfolio-level aggregation
+
+Segment-level loss decomposition
+
+Stress & Scenario Analysis
+
+Deterministic equity shocks
+
+Interest-rate shocks via duration approximation
+
+Correlation stress
+
+Historical window replay
+
+🧱 Repository Structure & Governance
+
+This repository is intentionally structured to reflect institutional model governance.
+
+risklib/
+  market/
+    market_risk_model.py     # MarketRiskModel + configuration objects
+    market.py                # Risk measures, simulation, backtesting primitives
+  credit/
+    credit_risk_model.py
+app/
+  app.py                     # Streamlit viewer only (no modeling logic)
+docs/
+  model_report.md            # Model methodology & validation notes
+
+Design Principles
+
+risklib/ is the source of truth
+All modeling, estimation, and validation logic lives here.
+
+app/ is presentation-only
+The UI does not implement or modify risk calculations.
+
+Loss-based convention throughout
+All risk measures are reported as positive loss amounts.
+
+🔍 Market Risk Model (Measurement & Validation)
+
+Market risk is implemented as a validation-grade model object, separating configuration, estimation, and diagnostics.
+
+from risklib.market.market_risk_model import MarketRiskModel, MarketRiskConfig
+
+cfg = MarketRiskConfig(
+    alpha=0.99,
+    method="historical",     # historical | parametric | monte_carlo | fhs
+    horizon_days=1,
+    exposure=1_000_000,
+)
+
+model = MarketRiskModel(returns, weights, cfg)
+model.fit()
+
+var = model.compute_var()
+es  = model.compute_es()
+summary = model.summary()
+
+
+This design mirrors institutional practice:
+
+Explicit configuration objects capture modeling assumptions
+
+Model objects encapsulate estimation logic
+
+Outputs include metadata required for validation review
+
+Backtesting is performed separately and out-of-sample
+
+📈 Market Risk Validation
+Backtesting
+
+Rolling 1-day VaR backtests
+
+Trailing-window estimation
+
+Exception tracking
+
+Kupiec Proportion-of-Failures (POF) test for unconditional coverage
+
+Interpretation
+
+The Kupiec test evaluates whether the observed exception frequency is statistically consistent with the expected (1 − α) rate implied by the model.
+
+🧠 Methodology Overview
+
+VaR: Loss exceeded with probability (1 − α)
+
+Expected Shortfall: Average loss conditional on VaR exceedance
+
+Filtered Historical Simulation:
+
+Volatility estimated using fixed-parameter GARCH(1,1)
+
+Returns standardized and re-scaled
+
+Expected Loss (Credit):
+EL = PD × LGD × EAD
+
+All models follow a consistent loss-based convention.
+
+🧪 Validation & Testing Philosophy
+
+This project emphasizes model validation, not just model output.
+
+Unit tests verify:
+
+VaR monotonicity across confidence levels
+
+ES ≥ VaR under consistent loss conventions
+
+Correct exception counting in backtests
+
+Credit loss aggregation consistency
+
+Backtesting results are interpretable and reproducible
+
+Assumptions and limitations are explicitly documented
+
+🚫 Out of Scope (By Design)
+
+To preserve clarity and rigor, this project does not attempt to be:
+
+A trading or portfolio optimization system
+
+A real-time production risk engine
+
+A regulatory-approved model
 
 Advanced extensions (e.g. factor models, ALM, optimization) are intentionally deferred.
 
----
+🖥 Application Interface
 
-## 🖥 Application Interface
+A lightweight Streamlit interface is provided strictly as a viewer to:
 
-A lightweight **Streamlit interface** is provided only as a viewer to:
+Run models with selected parameters
 
-- Run models with selected parameters
-- Visualize backtests and stress results
-- Inspect outputs interactively
+Visualize backtests and stress results
 
-All core modeling logic resides outside the UI to ensure separation between **model logic** and **presentation**.
+Export validation series
 
-**Live Demo:** https://integrated-risk-app.onrender.com/
+All modeling logic remains outside the UI.
 
----
+⚙️ Tech Stack
 
-## 📸 Example Outputs
+Python
 
-### Market Risk Backtesting (VaR & Exceptions)
+Pandas / NumPy
 
-Daily portfolio returns plotted against the VaR threshold.  
-Red points represent exceedances used in Kupiec backtesting.
+SciPy / Statsmodels
 
-### Credit Risk – Expected Loss (Batch)
+Plotly
 
-Aggregated EL with breakdown by segment, illustrating portfolio-level credit exposure.
+Streamlit
 
-![Credit Screenshot](docs/screenshot_2.png)
+yfinance (demo data only)
 
----
-
-## 🧠 Methodology Overview
-
-- **VaR**: loss threshold exceeded with probability \(1 - \alpha\)
-- **Expected Shortfall**: average loss conditional on VaR exceedance
-- **Kupiec POF Test**: statistical test for unconditional coverage
-- **Filtered Historical Simulation**: volatility-adjusted return filtering
-- **Expected Loss**:  
-  \[
-  \text{EL} = \text{PD} \times \text{LGD} \times \text{EAD}
-  \]
-
-All models follow a **loss-based convention** (risk measures reported as positive loss values).
-
----
-
-## 🧪 Validation & Testing Philosophy
-
-This project emphasizes **model validation**, not just model output.
-
-- Unit tests verify:
-  - Monotonicity of VaR across confidence levels
-  - ES ≥ VaR under consistent loss conventions
-  - Correct behavior of backtesting logic
-  - Credit EL aggregation consistency
-- Backtesting results are interpretable and reproducible
-- Assumptions and limitations are explicitly acknowledged
-
----
-
-## ⚙️ Tech Stack
-
-- **Python** — core modeling language
-- **Streamlit** — lightweight interface
-- **Pandas / NumPy** — data handling and numerical computation
-- **SciPy / Statsmodels** — statistical modeling
-- **Plotly** — interactive visualization
-- **yfinance** — market data (demo use only)
-
----
-
-## ⚡ Quickstart
-
-```bash
+⚡ Quickstart
 git clone https://github.com/sensor-aae/Integrated-Risk-App.git
 cd Integrated-Risk-App
 
@@ -140,10 +217,10 @@ source .venv/bin/activate   # Windows: .venv\Scripts\activate
 
 pip install -r requirements.txt
 streamlit run app/app.py
-```
+
 📄 Documentation
 
-A Model Risk Report (methodology, assumptions, validation results, and limitations) is maintained in the /docs directory and is intended to mirror institutional model documentation standards.
+A Model Risk Report (methodology, assumptions, validation results, and limitations) is maintained in the docs/ directory and mirrors institutional model documentation standards.
 
 ⚠️ Disclaimer
 
@@ -154,7 +231,7 @@ It is not intended for production use or investment decision-making.
 
 This repository is designed as a work sample for roles in:
 
-Risk Analytics
+Market Risk
 
 Model Risk / Model Validation
 
@@ -164,6 +241,4 @@ Pension & Institutional Investment Risk
 
 Risk Consulting
 
-It reflects how quantitative risk models are built, tested, challenged, and documented — not just how they are computed.
-
-
+It reflects how quantitative risk models are built, tested, challenged, and reviewed — not just how they are computed.
