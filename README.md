@@ -231,10 +231,3 @@ This repository is designed as a **work sample** for roles in:
 
 It reflects how quantitative risk models are **built, tested, challenged, and reviewed** — not just how they are computed.
 
-```
-
----
-
-If you paste **exactly this** into `README.md`, GitHub will render it correctly.  
-If you want the **same file without the code fences at the very top and bottom**, tell me and I’ll adjust once more — but this version *is* valid Markdown end-to-end.
-```
