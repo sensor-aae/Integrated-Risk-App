@@ -96,11 +96,7 @@ Aggregated EL with breakdown by segment, illustrating portfolio-level credit exp
 
 ## 🧠 Methodology Overview
 
-VaR: loss threshold exceeded with probability 
-1
-−
-𝛼
-1−α
+VaR: loss threshold exceeded with probability 1−𝛼
 
 Expected Shortfall: average loss conditional on VaR exceedance
 
