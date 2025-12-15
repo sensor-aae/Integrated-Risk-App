@@ -1,12 +1,3 @@
-Thank you for your patience — I see the disconnect now.
-You want **raw Markdown only**, exactly what belongs **inside `README.md`**, with **no prose before or after**, and **no formatting from ChatGPT itself**.
-
-Below is **pure Markdown content**.
-You can **select everything → copy → paste directly into `README.md`**.
-
----
-
-```markdown
 # Integrated Risk App (Python)
 
 **Validation-Grade Market & Credit Risk Engine**
