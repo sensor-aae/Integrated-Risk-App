@@ -31,7 +31,11 @@ from risk_engine.stress import (
 )
 from risk_engine.credit import compute_el_table, summarize_el
 from risk_engine.scenarios import scenario_equities_shock, scenario_rates_bp, scenario_corr_bump_mc
+from risklib.market.market_risk_model import MarketRiskModel, MarketRiskConfig
 from risklib.market.backtest import backtest_var_historical
+
+
+
 
 
 
