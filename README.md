@@ -13,49 +13,49 @@ Build a validation-ready risk engine that computes core risk measures (VaR, ES, 
 This repository is structured to resemble how pensions, model risk teams, and risk consultancies organize and review quantitative risk models.
 
 ## 📌 Scope (What This Project Intentionally Covers)
-Market Risk
+*Market Risk
 
-Value-at-Risk (VaR) and Expected Shortfall (ES)
+** Value-at-Risk (VaR) and Expected Shortfall (ES)
 
-Methods:
+** Methods:
 
-Historical Simulation
+***Historical Simulation
 
-Parametric (Normal)
+***Parametric (Normal)
 
-Monte Carlo
+***Monte Carlo
 
-Filtered Historical (GARCH-lite)
+***Filtered Historical (GARCH-lite)
 
-Rolling window estimation
+***Rolling window estimation
 
-Backtesting using Kupiec Proportion-of-Failures (POF) test
+***Backtesting using Kupiec Proportion-of-Failures (POF) test
 
-Multi-confidence-level calibration (e.g. 95%, 99%)
+***Multi-confidence-level calibration (e.g. 95%, 99%)
 
-Credit Risk
+*Credit Risk
 
-Expected Loss (EL) framework:
+**Expected Loss (EL) framework:
 
-Probability of Default (PD)
+***Probability of Default (PD)
 
-Loss Given Default (LGD)
+***Loss Given Default (LGD)
 
-Exposure at Default (EAD)
+***Exposure at Default (EAD)
 
-Batch portfolio-level aggregation
+**Batch portfolio-level aggregation
 
-Segment-level loss breakdown for monitoring
+**Segment-level loss breakdown for monitoring
 
-Stress & Scenario Analysis
+*Stress & Scenario Analysis
 
-Deterministic equity shocks
+**Deterministic equity shocks
 
-Interest-rate shocks using duration approximations
+**Interest-rate shocks using duration approximations
 
-Correlation stress
+**Correlation stress
 
-Historical window replay
+**Historical window replay
 
 ## 🚫 Out of Scope (By Design)
 
