@@ -34,11 +34,6 @@ from risk_engine.scenarios import scenario_equities_shock, scenario_rates_bp, sc
 from risklib.market.market_risk_model import MarketRiskModel, MarketRiskConfig
 from risklib.market.backtest import backtest_var_historical
 
-
-
-
-
-
 @st.cache_data(show_spinner=False)
 def _cov_and_mu(returns: pd.DataFrame, horizon: int):
     mu = returns.mean().values * horizon
