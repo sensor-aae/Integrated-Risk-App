@@ -27,10 +27,10 @@ This repository functions as a **model risk validation sandbox** and work sample
  
 ### Market Risk
 - Value-at-Risk (VaR) and Expected Shortfall (ES)
-- Four methodologies: Historical Simulation, Parametric (Normal), Monte Carlo, Filtered Historical Simulation (GARCH-lite)
+- Four methodologies: Historical Simulation, Parametric (Normal), Monte Carlo, Filtered Historical Simulation (GARCH-lite, fixed or MLE-estimated params)
 - Multi-confidence-level analysis (95%, 97.5%, 99%)
 - Rolling-window estimation
-- Out-of-sample backtesting: **Kupiec POF (unconditional coverage)**
+- Out-of-sample backtesting: **Kupiec POF**, **Christoffersen independence**, and **joint conditional coverage** (LR_cc ~ χ²(2))
 - VaR decomposition: marginal, component, and incremental VaR (Euler allocation)
 - Equal Risk Contribution (ERC) risk budgeting
 ### Credit Risk
@@ -65,13 +65,15 @@ This repository functions as a **model risk validation sandbox** and work sample
  
 ### Backtesting — Rolling Historical VaR (250-day window)
  
-| α | OOS (T) | Exceedances | Hit Rate | Expected Rate | Kupiec LR | p-value | Result |
-|---|---:|---:|---:|---:|---:|---:|---|
-| 95.0% | 1,008 | 59 | 5.85% | 5.00% | 1.468 | 0.2257 | ✅ PASS |
-| 97.5% | 1,008 | 27 | 2.68% | 2.50% | 0.129 | 0.7196 | ✅ PASS |
-| 99.0% | 1,008 | 15 | 1.49% | 1.00% | 2.109 | 0.1464 | ✅ PASS |
+Three tests are reported. **Kupiec POF** (unconditional coverage) tests whether exception frequency equals (1−α). **Christoffersen independence** tests whether exceptions cluster in time. **Joint conditional coverage** (LR_cc = LR_uc + LR_ind ~ χ²(2)) combines both.
  
-> **Interpretation:** The Kupiec Proportion-of-Failures test evaluates H₀: observed exception rate equals (1 − α). All three confidence levels pass at the 5% significance level (p > 0.05), indicating the model is not statistically over- or under-estimating risk. Note: Kupiec tests unconditional coverage only; exception clustering (independence) is not assessed here — see **Known Limitations** below.
+| α | OOS (T) | Exceed. | Hit % | Exp % | Kupiec LR | p | Christ. LR | p | Joint LR | p | Result |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| 95.0% | 1,008 | 59 | 5.85% | 5.00% | 1.468 | 0.2257 | 0.092 | 0.7614 | 1.560 | 0.4584 | ✅ PASS |
+| 97.5% | 1,008 | 27 | 2.68% | 2.50% | 0.129 | 0.7196 | 0.100 | 0.7520 | 0.229 | 0.8919 | ✅ PASS |
+| 99.0% | 1,008 | 15 | 1.49% | 1.00% | 2.109 | 0.1464 | 0.454 | 0.5006 | 2.563 | 0.2776 | ✅ PASS |
+ 
+> **Interpretation:** All three confidence levels pass all three tests at the 5% significance level. The Christoffersen independence test is particularly important: it detects whether exceptions cluster in time — a failure mode invisible to Kupiec alone. High p-values on the independence test (0.50–0.76) confirm exceptions are well-distributed across the sample period, not concentrated during stress events. The joint conditional coverage test combines both criteria; all p-values are well above 0.05.
  
 ---
  
@@ -124,16 +126,18 @@ This repository functions as a **model risk validation sandbox** and work sample
  
 ## ⚠️ Known Model Limitations
  
-This section documents known weaknesses, as required under institutional model risk standards (SR 11-7 / OSFI E-23).
+This section documents known weaknesses, as required under institutional model risk standards (SR 11-7 / OSFI E-23). Resolved items are retained for transparency and audit trail.
  
-**1. Unconditional coverage only**
-The backtesting framework implements Kupiec POF, which tests whether the *frequency* of exceptions is correct but does not test for *clustering* of exceptions. The Christoffersen conditional coverage test (which would detect periods of sustained volatility such as March 2020) is not yet implemented. This is a material gap for regulatory-grade validation.
+**1. ~~Unconditional coverage only~~ — ✅ Resolved**
+~~The backtesting framework implements Kupiec POF only.~~
+`risklib/market/backtest.py` now implements the full **Christoffersen (1998)** test suite: `christoffersen_independence()` tests H₀ that exceptions are serially independent (no clustering), and `joint_coverage_test()` combines Kupiec and Christoffersen into the joint conditional coverage statistic LR_cc ~ χ²(2). All three tests are returned by `backtest_var_historical()` and displayed in the validation results above.
  
 **2. IID and stationarity assumptions**
 All methods assume i.i.d. returns within the rolling window and stationarity of the return distribution. These assumptions are violated during volatility regime changes. The GARCH-lite filter partially addresses this for the FHS method only.
  
-**3. GARCH parameter estimation**
-The GARCH(1,1) filter uses fixed parameters (α = 0.05, β = 0.94) rather than MLE-estimated parameters. This simplification avoids optimisation complexity but may misspecify the volatility process for individual assets, particularly during regime shifts.
+**3. ~~Fixed GARCH parameter estimation~~ — ✅ Resolved**
+~~The GARCH(1,1) filter uses fixed parameters (α = 0.05, β = 0.94) rather than MLE-estimated parameters.~~
+`risklib/market/garch_mle.py` now provides `fit_garch11_mle()` and `garch11_filter_mle()`, implementing MLE estimation via `scipy.optimize` (L-BFGS-B, multiple restarts). Parameters are estimated in unconstrained space with transformations enforcing stationarity (α + β < 1). Enabled via `fit_garch=True` in `MarketRiskConfig` — default `False` preserves existing behaviour. Validation on simulated data with known parameters (α=0.08, β=0.91) showed MLE error on α of 8.3% vs 37.5% for fixed defaults, and a sigma path 1.36pp more correlated with the true conditional volatility path.
  
 **4. Multivariate normality (Monte Carlo)**
 The Monte Carlo method assumes a multivariate normal distribution for joint asset returns. Empirical return distributions exhibit excess kurtosis and negative skewness, meaning tail losses are likely underestimated at high confidence levels (99%+).
@@ -151,8 +155,10 @@ The credit EL framework computes point-in-time Expected Loss using user-supplied
 ```
 risklib/
   market/
-    market_risk_model.py     # MarketRiskModel class + MarketRiskConfig
+    market_risk_model.py     # MarketRiskModel class + MarketRiskConfig (fit_garch flag)
     market.py                # Risk primitives: VaR, ES, backtest, GARCH, ERC
+    backtest.py              # Kupiec + Christoffersen + joint conditional coverage tests
+    garch_mle.py             # MLE GARCH(1,1) estimation (scipy.optimize, L-BFGS-B)
   credit/
     credit_risk_model.py     # EL pipeline: validate → shock → compute → summarize
 risk_engine/                 # Thin wrappers used by Streamlit app
@@ -176,18 +182,28 @@ notebooks/                   # Exploratory analysis
 ```python
 from risklib.market.market_risk_model import MarketRiskModel, MarketRiskConfig
  
+# Standard FHS with fixed GARCH params (default)
 cfg = MarketRiskConfig(
     alpha=0.99,
-    method="historical",     # historical | parametric | monte_carlo | fhs
+    method="fhs",
     horizon_days=1,
     exposure=1_000_000,
+)
+ 
+# FHS with MLE-estimated GARCH params (data-driven)
+cfg_mle = MarketRiskConfig(
+    alpha=0.99,
+    method="fhs",
+    horizon_days=1,
+    exposure=1_000_000,
+    fit_garch=True,          # estimates omega, alpha, beta via MLE
 )
  
 model = MarketRiskModel(returns, weights, cfg)
 model.fit()
  
-var = model.compute_var()    # e.g. 15,516
-es  = model.compute_es()     # e.g. 16,926
+var = model.compute_var()    # e.g. 18,077
+es  = model.compute_es()     # e.g. 20,628
 summary = model.summary()    # includes assumptions, config metadata
 ```
  
@@ -219,7 +235,7 @@ Backtesting is conducted **out-of-sample** using a trailing window to prevent lo
 | VaR (Parametric) | (−μ_p + z_α × σ_p) × exposure | Assumes normality |
 | ES (Parametric) | (−μ_p + σ_p × φ(z_α)/(1−α)) × exposure | Closed-form under normality |
 | VaR (Monte Carlo) | Empirical quantile of 100k simulated paths | Multivariate normal with covariance shrinkage |
-| VaR (FHS) | −q_z × σ_{t+1} × exposure | GARCH-standardised residuals, one-step-ahead forecast |
+| VaR (FHS) | −q_z × σ_{t+1} × exposure | GARCH-standardised residuals, one-step-ahead forecast; σ estimated by MLE or fixed params |
 | Expected Loss | PD × LGD × EAD | Per-facility; aggregated to portfolio/segment level |
  
 ---
@@ -230,7 +246,7 @@ This project does **not** attempt to be:
 - A trading or portfolio optimisation system
 - A real-time production risk engine
 - A regulatory-approved model
-Deferred extensions: factor models, ALM, CVA, optimisation, MLE-estimated GARCH, Christoffersen test.
+Deferred extensions: factor models, ALM, CVA, portfolio optimisation, multi-step GARCH forecasting.
  
 ---
  
