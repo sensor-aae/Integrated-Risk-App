@@ -14,6 +14,7 @@ class MarketRiskConfig:
     method: str = "historical"  # historical | parametric | monte_carlo | fhs
     horizon_days: int = 1
     exposure: float = 1.0
+    fit_garch: bool = False  
 
 
 # Convenience for Normal
