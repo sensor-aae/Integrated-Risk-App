@@ -157,7 +157,7 @@ else:
 # ---------------- MARKET: BACKTEST (Historical VaR) ----------------
 if has_market and returns is not None and not returns.empty:
     st.subheader("Backtest — Rolling Historical VaR (1d)")
-
+ 
     available = len(returns)
     if available <= bt_window:
         st.warning(
@@ -170,9 +170,9 @@ if has_market and returns is not None and not returns.empty:
             alpha=alpha,
             window=int(bt_window)
         )
-
+ 
         left, right = st.columns([2, 1])
-
+ 
         with left:
             fig = go.Figure()
             fig.add_trace(go.Scatter(
@@ -183,38 +183,94 @@ if has_market and returns is not None and not returns.empty:
                 x=bt["VaR_threshold"].index, y=bt["VaR_threshold"].values,
                 mode="lines", name=f"VaR threshold ({int(alpha*100)}%)"
             ))
-
+ 
             exc_mask = (bt["exceptions"] == 1) & bt["VaR_threshold"].notna()
             fig.add_trace(go.Scatter(
                 x=bt["r_p"].index[exc_mask],
                 y=bt["r_p"].values[exc_mask],
                 mode="markers", name="Exceptions"
             ))
-
+ 
             fig.update_layout(
                 height=420,
                 xaxis_title="Date",
                 yaxis_title="Return"
             )
             st.plotly_chart(fig, use_container_width=True)
-
+ 
         with right:
-            st.markdown("**Kupiec POF (1-day)**")
+            # ── Sample info ──────────────────────────────────────────
+            st.markdown("**Sample**")
             st.write(f"Window: **{bt['window']}**")
             st.write(f"OOS points (T): **{bt['T']}**")
             st.write(f"Exceedances (x): **{bt['exceedances']}**")
             st.write(f"Hit rate (x/T): **{bt['hit_rate']:.4f}**")
+            st.write(f"Expected rate: **{1 - alpha:.4f}**")
+ 
+            st.markdown("---")
+ 
+            # ── Kupiec POF ───────────────────────────────────────────
+            kupiec_pass = bt["kupiec_pvalue"] > 0.05
+            st.markdown("**① Kupiec POF** — unconditional coverage")
+            st.caption("H₀: exception rate = (1 − α)")
             st.write(f"LR statistic: **{bt['kupiec_LR']:.3f}**")
             st.write(f"p-value: **{bt['kupiec_pvalue']:.4f}**")
-            st.caption("H₀: Actual exception rate equals (1 − α).")
-
+            st.write("Result: " + ("✅ Pass" if kupiec_pass else "❌ Fail"))
+ 
+            st.markdown("---")
+ 
+            # ── Christoffersen independence ──────────────────────────
+            christ_pass = bt["christoffersen_pvalue"] > 0.05
+            st.markdown("**② Christoffersen** — independence")
+            st.caption("H₀: exceptions are serially independent (no clustering)")
+            st.write(f"LR statistic: **{bt['christoffersen_LR']:.3f}**")
+            st.write(f"p-value: **{bt['christoffersen_pvalue']:.4f}**")
+            st.write("Result: " + ("✅ Pass" if christ_pass else "❌ Fail"))
+ 
+            # Transition matrix detail in expander to keep panel clean
+            with st.expander("Transition matrix"):
+                tr = bt["transitions"]
+                st.write(f"n₀₀ (no exc → no exc): **{tr['n00']}**")
+                st.write(f"n₀₁ (no exc → exc):    **{tr['n01']}**")
+                st.write(f"n₁₀ (exc → no exc):    **{tr['n10']}**")
+                st.write(f"n₁₁ (exc → exc):       **{tr['n11']}**")
+                st.write(f"π₀₁ (P(exc|no exc)):   **{tr['pi_01']:.4f}**")
+                st.write(f"π₁₁ (P(exc|exc)):      **{tr['pi_11']:.4f}**")
+                st.caption(
+                    "π₁₁ > π₀₁ indicates exception clustering. "
+                    "Under H₀ (independence) these should be approximately equal."
+                )
+ 
+            st.markdown("---")
+ 
+            # ── Joint conditional coverage ───────────────────────────
+            joint_pass = bt["joint_pvalue"] > 0.05
+            st.markdown("**③ Joint CC** — coverage + independence")
+            st.caption("H₀: correct frequency AND no clustering  (LR_cc ~ χ²(2))")
+            st.write(f"LR statistic: **{bt['joint_LR']:.3f}**")
+            st.write(f"p-value: **{bt['joint_pvalue']:.4f}**")
+            st.write("Result: " + ("✅ Pass" if joint_pass else "❌ Fail"))
+ 
+            # Overall verdict
+            st.markdown("---")
+            all_pass = kupiec_pass and christ_pass and joint_pass
+            if all_pass:
+                st.success("All three tests pass at 5% significance.")
+            else:
+                failed = []
+                if not kupiec_pass:  failed.append("Kupiec")
+                if not christ_pass:  failed.append("Christoffersen")
+                if not joint_pass:   failed.append("Joint CC")
+                st.error(f"Failed: {', '.join(failed)}")
+ 
+        # ── Download backtest series ─────────────────────────────────
         ex_df = pd.DataFrame({
-            "date": bt["r_p"].index,
-            "return": bt["r_p"].values,
+            "date":          bt["r_p"].index,
+            "return":        bt["r_p"].values,
             "VaR_threshold": bt["VaR_threshold"].values,
-            "exception": bt["exceptions"].values
+            "exception":     bt["exceptions"].values
         })
-
+ 
         st.download_button(
             "Download backtest series (CSV)",
             data=ex_df.to_csv(index=False).encode("utf-8"),
