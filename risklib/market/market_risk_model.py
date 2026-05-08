@@ -170,6 +170,7 @@ def fhs_var_es_next(
     exposure: float = 1.0,
     alpha_g: float = 0.05,
     beta_g: float = 0.94,
+    fit_garch: bool = False,        # ← new: True = MLE params, False = use alpha_g/beta_g
 ) -> Tuple[float, float]:
     r_p = pd.Series(returns.values @ weights, index=returns.index, name="r_p").dropna()
     if len(r_p) < 50:
@@ -178,23 +179,39 @@ def fhs_var_es_next(
         tail = r_p[r_p <= q]
         es_loss = float(-tail.mean() * exposure) if len(tail) else var_loss
         return var_loss, es_loss
-
-    long_var = float(r_p.var(ddof=1))
-    sigma = garch11_filter(r_p, alpha_g=alpha_g, beta_g=beta_g, long_run_var=long_var)
-    sigma_safe = sigma.replace(0.0, np.nan).bfill().ffill()
-    z = (r_p / sigma_safe).dropna()
-
-    qz = z.quantile(1 - alpha)
-    tail_z = z[z <= qz]
-    z_es = tail_z.mean() if len(tail_z) else qz
-
-    sigma_next = garch11_forecast_sigma_next(
-        float(r_p.iloc[-1]), float(sigma.iloc[-1]), alpha_g, beta_g, long_run_var=long_var
-    )
-
+ 
+    if fit_garch:
+        # MLE-estimated parameters — imports from new garch_mle module
+        from risklib.market.garch_mle import garch11_filter_mle, garch11_forecast_next
+        sigma, fit_info = garch11_filter_mle(r_p, fit=True)
+        omega   = fit_info["omega"]
+        alpha_g = fit_info["alpha_g"]
+        beta_g  = fit_info["beta_g"]
+        sigma_safe = sigma.replace(0.0, np.nan).bfill().ffill()
+        z = (r_p / sigma_safe).dropna()
+        qz = z.quantile(1 - alpha)
+        tail_z = z[z <= qz]
+        z_es = tail_z.mean() if len(tail_z) else qz
+        sigma_next = garch11_forecast_next(
+            float(r_p.iloc[-1]), float(sigma.iloc[-1]), omega, alpha_g, beta_g
+        )
+    else:
+        # Original fixed-parameter path — unchanged behaviour
+        long_var = float(r_p.var(ddof=1))
+        sigma = garch11_filter(r_p, alpha_g=alpha_g, beta_g=beta_g, long_run_var=long_var)
+        sigma_safe = sigma.replace(0.0, np.nan).bfill().ffill()
+        z = (r_p / sigma_safe).dropna()
+        qz = z.quantile(1 - alpha)
+        tail_z = z[z <= qz]
+        z_es = tail_z.mean() if len(tail_z) else qz
+        sigma_next = garch11_forecast_sigma_next(
+            float(r_p.iloc[-1]), float(sigma.iloc[-1]), alpha_g, beta_g, long_run_var=long_var
+        )
+ 
     var_loss = float(-qz * sigma_next * exposure)
-    es_loss = float(-z_es * sigma_next * exposure)
+    es_loss  = float(-z_es * sigma_next * exposure)
     return var_loss, es_loss
+ 
 
 
 class MarketRiskModel:
