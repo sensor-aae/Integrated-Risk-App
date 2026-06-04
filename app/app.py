@@ -9,6 +9,7 @@ from pathlib import Path
 import sys
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
+import math
 import streamlit as st
 import numpy as np
 import pandas as pd
@@ -34,17 +35,110 @@ from risk_engine.scenarios import scenario_equities_shock, scenario_rates_bp, sc
 from risklib.market.market_risk_model import MarketRiskModel, MarketRiskConfig
 from risklib.market.backtest import backtest_var_historical
 
+# ================================================================
+# CACHE LAYER
+# All expensive computations live here.  Each function is keyed on
+# exactly the inputs that change its output — Streamlit hashes
+# DataFrames by value automatically; weights are passed as a tuple.
+# ================================================================
+
 @st.cache_data(show_spinner=False)
-def _cov_and_mu(returns: pd.DataFrame, horizon: int):
+def _cached_load(file_bytes: bytes, ret_method: str, date_col: str):
+    """Parse the uploaded CSV once; re-runs only when the file or
+    method/date-col settings change."""
+    import io
+    prices = load_prices(io.BytesIO(file_bytes), data_col=(date_col or None))
+    returns = to_returns(prices, method=ret_method)
+    return prices, returns
+
+
+@st.cache_data(show_spinner=False)
+def _cached_var_es(
+    returns: pd.DataFrame,
+    weights_t: tuple,
+    alpha: float,
+    horizon: int,
+    exposure: float,
+    method_str: str,
+) -> tuple:
+    """Fit MarketRiskModel and return (var_val, es_val)."""
+    weights = np.array(weights_t)
+    cfg = MarketRiskConfig(
+        alpha=alpha,
+        method=method_str,
+        horizon_days=horizon,
+        exposure=exposure,
+    )
+    model = MarketRiskModel(returns, weights, cfg)
+    model.fit()
+    return model.compute_var(), model.compute_es()
+
+
+@st.cache_data(show_spinner=False)
+def _cached_backtest(
+    returns: pd.DataFrame,
+    weights_t: tuple,
+    alpha: float,
+    window: int,
+) -> dict:
+    """Rolling historical VaR backtest."""
+    weights = np.array(weights_t)
+    return backtest_var_historical(
+        returns=returns, weights=weights, alpha=alpha, window=window
+    )
+
+
+@st.cache_data(show_spinner=False)
+def _cached_var_decomp(
+    returns: pd.DataFrame,
+    weights_t: tuple,
+    alpha: float,
+    horizon: int,
+    exposure: float,
+) -> dict:
+    """var_parametric_normal_parts — shared by Analytics, What-if, Report."""
+    weights = np.array(weights_t)
+    return var_parametric_normal_parts(
+        returns, weights, alpha=alpha, horizon_days=horizon, exposure=exposure
+    )
+
+
+@st.cache_data(show_spinner=False)
+def _cached_incremental_var(
+    returns: pd.DataFrame,
+    weights_t: tuple,
+    alpha: float,
+    horizon: int,
+    exposure: float,
+) -> dict:
+    weights = np.array(weights_t)
+    return incremental_var_normal(
+        returns, weights, alpha=alpha, horizon_days=horizon, exposure=exposure
+    )
+
+
+@st.cache_data(show_spinner=False)
+def _cached_corr(returns: pd.DataFrame, lookback: int) -> pd.DataFrame:
+    """Correlation matrix for Analytics tab."""
+    r_slice = returns.tail(lookback) if len(returns) >= lookback else returns
+    return r_slice.corr()
+
+
+@st.cache_data(show_spinner=False)
+def _cached_cov_mu(returns: pd.DataFrame, horizon: int):
+    """Annualised (horizon-scaled) mu and cov used by stress tests."""
     mu = returns.mean().values * horizon
     cov = returns.cov().values * horizon
     return mu, cov
 
-# ---------------- UI CONFIG ----------------
+
+# ================================================================
+# UI CONFIG
+# ================================================================
 st.set_page_config(page_title="Risk App", layout="wide")
 st.title("Integrated Risk App (Python)")
 
-# ---------------- SIDEBAR (unchanged controls) ----------------
+# ---------------- SIDEBAR ----------------
 st.sidebar.header("1) Portfolio")
 ret_method = st.sidebar.selectbox("Return type", ["log", "simple"], index=0)
 weights_mode = st.sidebar.selectbox("Weights", ["Equal", "Manual by column name"])
@@ -60,7 +154,6 @@ method_choice = st.sidebar.radio(
     key="method_choice"
 )
 
-# Method-specific controls (used only when market data is present)
 n_sims = seed = shrink = None
 alpha_g = beta_g = None
 if method_choice == "Monte Carlo":
@@ -74,13 +167,12 @@ if method_choice == "Filtered Historical (GARCH-lite)":
 st.sidebar.header("3) Backtest")
 bt_window = st.sidebar.number_input("Rolling window (days)", min_value=50, value=250, step=10)
 
-# ---------------- MARKET DATA INPUT (moved from sidebar) ----------------
+# ---------------- MARKET DATA INPUT ----------------
 st.markdown("### Market data")
 st.caption("Upload a prices CSV (Date column + one column per ticker). This powers the market risk, backtests, analytics, scenarios, ERC, and report features.")
 file = st.file_uploader("Upload prices CSV", type=["csv"], key="prices_csv_main")
 date_col = st.text_input("Date column name (optional)", value="")
 
-# non-blocking load
 has_market = False
 prices = None
 returns = None
@@ -88,20 +180,24 @@ weights = None
 
 if file is not None:
     try:
-        prices = load_prices(file, data_col=(date_col or None))
-        returns = to_returns(prices, method=("log" if ret_method == "log" else "simple"))
+        # Read bytes once so the cache key is stable across reruns
+        file_bytes = file.read()
+        prices, returns = _cached_load(
+            file_bytes,
+            "log" if ret_method == "log" else "simple",
+            date_col,
+        )
         has_market = True
     except Exception as e:
         st.error(f"Error loading market data: {e}")
 else:
     st.info("No market CSV uploaded yet. You can still use the **Credit — Expected Loss (Batch)** section below.")
 
-# ---------------- MARKET: DATA PREVIEW + WEIGHTS ----------------
+# ---------------- DATA PREVIEW + WEIGHTS ----------------
 if has_market:
     st.subheader("Market data preview")
     st.dataframe(prices.tail())
 
-    # Weights
     if weights_mode == "Equal":
         weights = np.ones(len(returns.columns)) / len(returns.columns)
     else:
@@ -115,36 +211,29 @@ if has_market:
                     k, v = p.split("=")
                     try:
                         wdict[k.strip()] = float(v)
-                    except:
+                    except Exception:
                         pass
         weights = np.array([wdict.get(c, 0.0) for c in returns.columns], dtype=float)
         s = weights.sum()
         if s != 0:
             weights = weights / s
 
-# ---------------- MARKET: POINT MEASURES ----------------
+# ---------------- POINT MEASURES ----------------
 if has_market and returns is not None and not returns.empty:
     st.subheader("Point Risk Measures")
 
     method_map = {
-        "Historical": "historical",
-        "Parametric (Normal)": "parametric",
-        "Monte Carlo": "monte_carlo",
-        "GARCH-lite": "fhs",
+        "Historical":                        "historical",
+        "Parametric (Normal)":               "parametric",
+        "Monte Carlo":                        "monte_carlo",
+        "Filtered Historical (GARCH-lite)":  "fhs",
     }
+    method_str = method_map.get(method_choice, "historical")
+    weights_t = tuple(weights.tolist())
 
-    cfg = MarketRiskConfig(
-        alpha=alpha,
-        method=method_map.get(method_choice, "historical"),
-        horizon_days=horizon,
-        exposure=exposure,
+    var_val, es_val = _cached_var_es(
+        returns, weights_t, alpha, int(horizon), exposure, method_str
     )
-
-    model = MarketRiskModel(returns, weights, cfg)
-    model.fit()
-
-    var_val = model.compute_var()
-    es_val = model.compute_es()
 
     c1, c2 = st.columns(2)
     c1.metric(f"VaR @ {int(alpha*100)}%, {horizon}d", f"{var_val:,.0f}")
@@ -154,25 +243,21 @@ if has_market and returns is not None and not returns.empty:
 else:
     st.info("Load market data to compute risk measures.")
 
-# ---------------- MARKET: BACKTEST (Historical VaR) ----------------
+# ---------------- BACKTEST ----------------
 if has_market and returns is not None and not returns.empty:
     st.subheader("Backtest — Rolling Historical VaR (1d)")
- 
+
     available = len(returns)
     if available <= bt_window:
         st.warning(
             f"Not enough data for backtest: have {available} return rows, window is {bt_window}."
         )
     else:
-        bt = backtest_var_historical(
-            returns=returns,
-            weights=weights,
-            alpha=alpha,
-            window=int(bt_window)
-        )
- 
+        weights_t = tuple(weights.tolist())
+        bt = _cached_backtest(returns, weights_t, alpha, int(bt_window))
+
         left, right = st.columns([2, 1])
- 
+
         with left:
             fig = go.Figure()
             fig.add_trace(go.Scatter(
@@ -183,51 +268,43 @@ if has_market and returns is not None and not returns.empty:
                 x=bt["VaR_threshold"].index, y=bt["VaR_threshold"].values,
                 mode="lines", name=f"VaR threshold ({int(alpha*100)}%)"
             ))
- 
+
             exc_mask = (bt["exceptions"] == 1) & bt["VaR_threshold"].notna()
             fig.add_trace(go.Scatter(
                 x=bt["r_p"].index[exc_mask],
                 y=bt["r_p"].values[exc_mask],
                 mode="markers", name="Exceptions"
             ))
- 
-            fig.update_layout(
-                height=420,
-                xaxis_title="Date",
-                yaxis_title="Return"
-            )
+
+            fig.update_layout(height=420, xaxis_title="Date", yaxis_title="Return")
             st.plotly_chart(fig, use_container_width=True)
- 
+
         with right:
-            # ── Sample info ──────────────────────────────────────────
             st.markdown("**Sample**")
             st.write(f"Window: **{bt['window']}**")
             st.write(f"OOS points (T): **{bt['T']}**")
             st.write(f"Exceedances (x): **{bt['exceedances']}**")
             st.write(f"Hit rate (x/T): **{bt['hit_rate']:.4f}**")
             st.write(f"Expected rate: **{1 - alpha:.4f}**")
- 
+
             st.markdown("---")
- 
-            # ── Kupiec POF ───────────────────────────────────────────
+
             kupiec_pass = bt["kupiec_pvalue"] > 0.05
             st.markdown("**① Kupiec POF** — unconditional coverage")
             st.caption("H₀: exception rate = (1 − α)")
             st.write(f"LR statistic: **{bt['kupiec_LR']:.3f}**")
             st.write(f"p-value: **{bt['kupiec_pvalue']:.4f}**")
             st.write("Result: " + ("✅ Pass" if kupiec_pass else "❌ Fail"))
- 
+
             st.markdown("---")
- 
-            # ── Christoffersen independence ──────────────────────────
+
             christ_pass = bt["christoffersen_pvalue"] > 0.05
             st.markdown("**② Christoffersen** — independence")
             st.caption("H₀: exceptions are serially independent (no clustering)")
             st.write(f"LR statistic: **{bt['christoffersen_LR']:.3f}**")
             st.write(f"p-value: **{bt['christoffersen_pvalue']:.4f}**")
             st.write("Result: " + ("✅ Pass" if christ_pass else "❌ Fail"))
- 
-            # Transition matrix detail in expander to keep panel clean
+
             with st.expander("Transition matrix"):
                 tr = bt["transitions"]
                 st.write(f"n₀₀ (no exc → no exc): **{tr['n00']}**")
@@ -240,18 +317,16 @@ if has_market and returns is not None and not returns.empty:
                     "π₁₁ > π₀₁ indicates exception clustering. "
                     "Under H₀ (independence) these should be approximately equal."
                 )
- 
+
             st.markdown("---")
- 
-            # ── Joint conditional coverage ───────────────────────────
+
             joint_pass = bt["joint_pvalue"] > 0.05
             st.markdown("**③ Joint CC** — coverage + independence")
             st.caption("H₀: correct frequency AND no clustering  (LR_cc ~ χ²(2))")
             st.write(f"LR statistic: **{bt['joint_LR']:.3f}**")
             st.write(f"p-value: **{bt['joint_pvalue']:.4f}**")
             st.write("Result: " + ("✅ Pass" if joint_pass else "❌ Fail"))
- 
-            # Overall verdict
+
             st.markdown("---")
             all_pass = kupiec_pass and christ_pass and joint_pass
             if all_pass:
@@ -262,15 +337,13 @@ if has_market and returns is not None and not returns.empty:
                 if not christ_pass:  failed.append("Christoffersen")
                 if not joint_pass:   failed.append("Joint CC")
                 st.error(f"Failed: {', '.join(failed)}")
- 
-        # ── Download backtest series ─────────────────────────────────
+
         ex_df = pd.DataFrame({
             "date":          bt["r_p"].index,
             "return":        bt["r_p"].values,
             "VaR_threshold": bt["VaR_threshold"].values,
             "exception":     bt["exceptions"].values
         })
- 
         st.download_button(
             "Download backtest series (CSV)",
             data=ex_df.to_csv(index=False).encode("utf-8"),
@@ -278,7 +351,7 @@ if has_market and returns is not None and not returns.empty:
             mime="text/csv"
         )
 
-# ---------------- MARKET: STRESS TESTING ----------------
+# ---------------- STRESS TESTING ----------------
 if has_market:
     st.markdown("---")
     st.header("Stress Testing")
@@ -307,37 +380,40 @@ if has_market:
         sims = st.number_input("MC simulations", min_value=10_000, value=50_000, step=10_000)
         seed2 = st.number_input("Random seed", min_value=0, value=7, step=1)
         if st.button("Run covariance scaling stress"):
-            mu = returns.mean().values * horizon
-            cov = returns.cov().values * horizon
+            mu, cov = _cached_cov_mu(returns, int(horizon))
             cov_s = scale_covariance(cov, scale)
-            var_s, es_s = mc_portfolio_loss_from_mu_cov(mu, cov_s, weights, alpha=alpha,
-                                                        exposure=exposure, n_sims=int(sims), seed=int(seed2))
+            var_s, es_s = mc_portfolio_loss_from_mu_cov(
+                mu, cov_s, weights, alpha=alpha,
+                exposure=exposure, n_sims=int(sims), seed=int(seed2)
+            )
             c1, c2 = st.columns(2)
             c1.metric(f"VaR stressed (×{scale:.1f})", f"{var_s:,.0f}")
             c2.metric("ES stressed", f"{es_s:,.0f}")
 
     with tabs[2]:
-        st.write("Replay a historical period’s mean/covariance for your current portfolio (MC VaR/ES).")
+        st.write("Replay a historical period's mean/covariance for your current portfolio (MC VaR/ES).")
         st.caption("Choose dates within your uploaded data.")
         min_d, max_d = returns.index.min().date(), returns.index.max().date()
         c1, c2 = st.columns(2)
         start = c1.date_input("Window start", min_d, min_value=min_d, max_value=max_d)
-        end   = c2.date_input("Window end", max_d, min_value=min_d, max_value=max_d)
+        end   = c2.date_input("Window end",   max_d, min_value=min_d, max_value=max_d)
         sims2 = st.number_input("MC simulations", min_value=10_000, value=50_000, step=10_000, key="sims_hist")
         seed_hist = st.number_input("Random seed", min_value=0, value=11, step=1, key="seed_hist")
         if st.button("Run historical replay"):
             try:
                 mu_win, cov_win = historical_window_mu_cov(returns, str(start), str(end))
                 mu_h, cov_h = mu_win * horizon, cov_win * horizon
-                var_h, es_h = mc_portfolio_loss_from_mu_cov(mu_h, cov_h, weights, alpha=alpha,
-                                                            exposure=exposure, n_sims=int(sims2), seed=int(seed_hist))
+                var_h, es_h = mc_portfolio_loss_from_mu_cov(
+                    mu_h, cov_h, weights, alpha=alpha,
+                    exposure=exposure, n_sims=int(sims2), seed=int(seed_hist)
+                )
                 c1, c2 = st.columns(2)
                 c1.metric("VaR (historical window)", f"{var_h:,.0f}")
                 c2.metric("ES (historical window)", f"{es_h:,.0f}")
             except Exception as e:
                 st.error(f"Error: {e}")
 
-# ---------------- CREDIT EL (ALWAYS AVAILABLE; below market uploader) ----------------
+# ---------------- CREDIT EL ----------------
 st.markdown("---")
 st.header("Credit — Expected Loss (Batch)")
 st.write("Upload a CSV with columns for **PD**, **LGD**, **EAD** (case-insensitive). Optional grouping columns (Segment/Rating/etc.) are auto-detected.")
@@ -346,10 +422,10 @@ credit_file = st.file_uploader("Upload exposures CSV", type=["csv"], key="credit
 with st.expander("Scenario shocks"):
     c1, c2, c3 = st.columns(3)
     with c1:
-        pd_mult = st.number_input("PD multiplier (×)", min_value=0.0, value=1.0, step=0.05)
+        pd_mult    = st.number_input("PD multiplier (×)", min_value=0.0, value=1.0, step=0.05)
         pd_add_bps = st.number_input("PD additive (basis points)", min_value=-5000, max_value=5000, value=0, step=25)
     with c2:
-        lgd_mult = st.number_input("LGD multiplier (×)", min_value=0.0, value=1.0, step=0.05)
+        lgd_mult    = st.number_input("LGD multiplier (×)", min_value=0.0, value=1.0, step=0.05)
         lgd_add_pct = st.number_input("LGD additive (percentage points)", min_value=-100, max_value=100, value=0, step=1)
     with c3:
         ead_mult = st.number_input("EAD multiplier (×)", min_value=0.0, value=1.0, step=0.05)
@@ -368,7 +444,7 @@ if credit_file is not None:
         grp, totals = summarize_el(df_el, seg_col)
         c1, c2, c3 = st.columns(3)
         c1.metric("Total EAD", f"{totals['total_EAD']:,.0f}")
-        c2.metric("Total EL", f"{totals['total_EL']:,.0f}")
+        c2.metric("Total EL",  f"{totals['total_EL']:,.0f}")
         c3.metric("EL / EAD (avg)", f"{totals['EL_pct_of_EAD']*100:,.2f}%")
 
         if not grp.empty:
@@ -393,12 +469,11 @@ if credit_file is not None:
 else:
     st.info("For credit EL, upload an exposures CSV (PD, LGD, EAD). This does not require market data.")
 
-# ---------------- CALIBRATION (MARKET) ----------------
+# ---------------- CALIBRATION ----------------
 if has_market:
     st.markdown("---")
     st.header("Calibration")
 
-    import math
     def _kupiec_pval(x: int, T: int, alpha_: float) -> float:
         if T <= 0:
             return float("nan")
@@ -418,22 +493,26 @@ if has_market:
             default=[0.95, 0.975, 0.99, 0.995]
         )
         window_cal = st.number_input("Backtest window (days)", min_value=50, value=int(bt_window), step=10, key="calib_bt_window")
-        include_fhs = st.checkbox("Include GARCH-lite (FHS) backtest comparison",
-                                  value=(method_choice == "Filtered Historical (GARCH-lite)"))
+        include_fhs = st.checkbox(
+            "Include GARCH-lite (FHS) backtest comparison",
+            value=(method_choice == "Filtered Historical (GARCH-lite)")
+        )
 
         if st.button("Run calibration"):
+            weights_t = tuple(weights.tolist())
             rows = []
             for a in alphas_to_test:
                 if len(returns) > window_cal:
-                    bt_hist = backtest_var_historical(returns, weights, alpha=a, window=int(window_cal))
+                    bt_hist = _cached_backtest(returns, weights_t, alpha=a, window=int(window_cal))
                     T_h = int(bt_hist["T"]); x_h = int(bt_hist["exceedances"])
                     hit_h = float(bt_hist["hit_rate"]) if T_h > 0 else float("nan")
-                    p_h = _kupiec_pval(x_h, T_h, a) if T_h > 0 else float("nan")
+                    p_h   = _kupiec_pval(x_h, T_h, a) if T_h > 0 else float("nan")
                 else:
                     T_h = x_h = float("nan"); hit_h = p_h = float("nan")
 
                 row = {
-                    "alpha": a, "expected_exceed_%": (1 - a) * 100.0,
+                    "alpha": a,
+                    "expected_exceed_%": (1 - a) * 100.0,
                     "Hist_T": T_h, "Hist_exceed": x_h,
                     "Hist_hit_%": hit_h * 100.0 if not np.isnan(hit_h) else np.nan,
                     "Hist_Kupiec_p": p_h,
@@ -443,11 +522,11 @@ if has_market:
                     bt_fhs = backtest_fhs_var(
                         returns, weights, alpha=a, window_min=int(window_cal),
                         alpha_g=float(alpha_g if alpha_g is not None else 0.05),
-                        beta_g=float(beta_g if beta_g is not None else 0.94)
+                        beta_g=float(beta_g  if beta_g  is not None else 0.94)
                     )
                     T_f = int(bt_fhs["T"]); x_f = int(bt_fhs["exceedances"])
                     hit_f = float(bt_fhs["hit_rate"]) if T_f > 0 else float("nan")
-                    p_f = _kupiec_pval(x_f, T_f, a) if T_f > 0 else float("nan")
+                    p_f   = _kupiec_pval(x_f, T_f, a) if T_f > 0 else float("nan")
                     row.update({
                         "FHS_T": T_f, "FHS_exceed": x_f,
                         "FHS_hit_%": hit_f * 100.0 if not np.isnan(hit_f) else np.nan,
@@ -487,7 +566,7 @@ if has_market:
                 mime="text/csv",
             )
 
-# ---------------- MARKET: ANALYTICS ----------------
+# ---------------- ANALYTICS ----------------
 if has_market:
     st.markdown("---")
     st.header("Analytics")
@@ -497,20 +576,23 @@ if has_market:
     with tabs_a[0]:
         st.write("Correlation matrix of asset returns (last 250 days by default).")
         lookback = st.number_input("Lookback (days)", min_value=50, value=250, step=10, key="corr_lookback")
-        r_slice = returns.tail(int(lookback)) if len(returns) >= lookback else returns
-        corr = r_slice.corr()
-        fig_corr = px.imshow(corr, text_auto=True, color_continuous_scale="RdBu_r", zmin=-1, zmax=1,
-                             title="Correlation heatmap")
+        corr = _cached_corr(returns, int(lookback))
+        fig_corr = px.imshow(
+            corr, text_auto=True, color_continuous_scale="RdBu_r", zmin=-1, zmax=1,
+            title="Correlation heatmap"
+        )
         st.plotly_chart(fig_corr, use_container_width=True)
 
     with tabs_a[1]:
         st.write("Component & marginal VaR under a Normal approximation (Euler allocation).")
-        parts = var_parametric_normal_parts(returns, weights, alpha=alpha, horizon_days=horizon, exposure=exposure)
+        weights_t = tuple(weights.tolist())
+        parts = _cached_var_decomp(returns, weights_t, alpha, int(horizon), exposure)
         tickers = list(returns.columns)
         df_parts = pd.DataFrame({
             "Ticker": tickers,
             "Weight": (weights / weights.sum()) if weights.sum() != 0 else weights,
-            "mVaR": parts["mVaR"], "cVaR": parts["cVaR"],
+            "mVaR": parts["mVaR"],
+            "cVaR": parts["cVaR"],
             "Percent of VaR": parts["pContrib"]
         })
         df_parts["Percent of VaR"] = (df_parts["Percent of VaR"] * 100).round(2)
@@ -528,7 +610,7 @@ if has_market:
         c3.metric("σ (portfolio, horizon)", f"{parts['sigma_p']:.6f}")
         st.caption("Component VaR sums (≈) to portfolio VaR. Marginal VaR is the sensitivity to a small weight increase.")
 
-# ---------------- MARKET: WHAT-IF WEIGHTS ----------------
+# ---------------- WHAT-IF WEIGHTS ----------------
 if has_market:
     st.markdown("---")
     st.header("What-if: tweak weights")
@@ -538,9 +620,11 @@ if has_market:
     new_w = []
     for i, t in enumerate(tickers):
         with cols[i % len(cols)]:
-            v = st.slider(f"{t} weight", min_value=0.0, max_value=1.0,
-                          value=float(weights[i]) if weights.sum() > 0 else 0.0,
-                          step=0.01, key=f"w_{t}")
+            v = st.slider(
+                f"{t} weight", min_value=0.0, max_value=1.0,
+                value=float(weights[i]) if weights.sum() > 0 else 0.0,
+                step=0.01, key=f"w_{t}"
+            )
             new_w.append(v)
     new_w = np.array(new_w, dtype=float)
     if new_w.sum() > 0:
@@ -549,8 +633,11 @@ if has_market:
         st.warning("All weights are zero; cannot compute.")
         new_w = weights
 
-    curr = var_parametric_normal_parts(returns, weights, alpha=alpha, horizon_days=horizon, exposure=exposure)
-    what = var_parametric_normal_parts(returns, new_w,   alpha=alpha, horizon_days=horizon, exposure=exposure)
+    weights_t     = tuple(weights.tolist())
+    new_w_t       = tuple(new_w.tolist())
+
+    curr = _cached_var_decomp(returns, weights_t, alpha, int(horizon), exposure)
+    what = _cached_var_decomp(returns, new_w_t,   alpha, int(horizon), exposure)
 
     c1, c2, c3 = st.columns(3)
     c1.metric("Current VaR (Normal)", f"{curr['VaR']:,.0f}")
@@ -560,51 +647,55 @@ if has_market:
     df_curr = pd.DataFrame({
         "Ticker": tickers,
         "Weight": (weights / weights.sum()) if weights.sum() != 0 else weights,
-        "cVaR (curr)": curr["cVaR"],
-        "%VaR (curr)": (curr["pContrib"] * 100.0),
+        "cVaR (curr)":  curr["cVaR"],
+        "%VaR (curr)":  (curr["pContrib"] * 100.0),
     })
     df_what = pd.DataFrame({
         "Ticker": tickers,
         "Weight (what-if)": new_w,
-        "cVaR (what-if)": what["cVaR"],
-        "%VaR (what-if)": (what["pContrib"] * 100.0),
+        "cVaR (what-if)":   what["cVaR"],
+        "%VaR (what-if)":   (what["pContrib"] * 100.0),
     })
     df_join = df_curr.merge(df_what, on="Ticker")
     st.dataframe(df_join)
 
-    inc = incremental_var_normal(returns, weights, alpha=alpha, horizon_days=horizon, exposure=exposure)
+    inc = _cached_incremental_var(returns, weights_t, alpha, int(horizon), exposure)
     df_inc = pd.DataFrame({"Ticker": tickers, "iVaR ≈ cVaR (curr)": inc["cVaR"]})
     st.caption("Incremental VaR ≈ component VaR under the Normal Euler allocation.")
     st.dataframe(df_inc)
 
     try:
         fig = go.Figure()
-        fig.add_trace(go.Bar(name="cVaR (curr)", x=tickers, y=df_join["cVaR (curr)"]))
+        fig.add_trace(go.Bar(name="cVaR (curr)",    x=tickers, y=df_join["cVaR (curr)"]))
         fig.add_trace(go.Bar(name="cVaR (what-if)", x=tickers, y=df_join["cVaR (what-if)"]))
         fig.update_layout(barmode="group", title="Component VaR (money)")
         st.plotly_chart(fig, use_container_width=True)
     except Exception:
         pass
 
-# ---------------- MARKET: RISK BUDGETING (ERC) ----------------
+# ---------------- RISK BUDGETING (ERC) ----------------
 if has_market:
     st.markdown("---")
     st.header("Risk budgeting — Equal Risk Contribution (ERC)")
 
     with st.expander("Compute ERC weights"):
-        erc_min = st.number_input("Min weight", 0.0, 1.0, 0.0, 0.01)
-        erc_max = st.number_input("Max weight", 0.0, 1.0, 1.0, 0.01)
+        erc_min  = st.number_input("Min weight", 0.0, 1.0, 0.0, 0.01)
+        erc_max  = st.number_input("Max weight", 0.0, 1.0, 1.0, 0.01)
         erc_step = st.slider("Update damping (step)", 0.1, 1.0, 0.5, 0.1)
-        erc_tol = st.number_input("Tolerance", 1e-12, 1e-2, 1e-8, format="%.1e")
+        erc_tol  = st.number_input("Tolerance", 1e-12, 1e-2, 1e-8, format="%.1e")
         init_from_current = st.checkbox("Initialize from current weights", value=True)
 
         if st.button("Run ERC"):
             init = weights if init_from_current and weights.sum() > 0 else None
-            w_erc, info = erc_weights(returns, horizon_days=horizon, init=init,
-                                      min_w=float(erc_min), max_w=float(erc_max),
-                                      step=float(erc_step), tol=float(erc_tol))
-            parts_curr = var_parametric_normal_parts(returns, weights, alpha=alpha, horizon_days=horizon, exposure=exposure)
-            parts_erc  = var_parametric_normal_parts(returns, w_erc,   alpha=alpha, horizon_days=horizon, exposure=exposure)
+            w_erc, info = erc_weights(
+                returns, horizon_days=horizon, init=init,
+                min_w=float(erc_min), max_w=float(erc_max),
+                step=float(erc_step), tol=float(erc_tol)
+            )
+            weights_t = tuple(weights.tolist())
+            w_erc_t   = tuple(w_erc.tolist())
+            parts_curr = _cached_var_decomp(returns, weights_t, alpha, int(horizon), exposure)
+            parts_erc  = _cached_var_decomp(returns, w_erc_t,   alpha, int(horizon), exposure)
 
             tickers = list(returns.columns)
             df_erc = pd.DataFrame({
@@ -612,21 +703,21 @@ if has_market:
                 "Weight (current)": (weights / weights.sum()) if weights.sum() != 0 else weights,
                 "Weight (ERC)": w_erc,
                 "%VaR (current)": (parts_curr["pContrib"] * 100.0),
-                "%VaR (ERC)": (parts_erc["pContrib"] * 100.0),
+                "%VaR (ERC)":     (parts_erc["pContrib"]  * 100.0),
             })
             c1, c2 = st.columns(2)
             c1.metric("Portfolio VaR (current, Normal)", f"{parts_curr['VaR']:,.0f}")
-            c2.metric("Portfolio VaR (ERC, Normal)", f"{parts_erc['VaR']:,.0f}")
+            c2.metric("Portfolio VaR (ERC, Normal)",     f"{parts_erc['VaR']:,.0f}")
             st.dataframe(df_erc)
 
             st.download_button(
                 "Download ERC weights (CSV)",
-                data=df_erc[["Ticker","Weight (ERC)"]].to_csv(index=False).encode("utf-8"),
+                data=df_erc[["Ticker", "Weight (ERC)"]].to_csv(index=False).encode("utf-8"),
                 file_name="erc_weights.csv", mime="text/csv"
             )
             st.caption(f"Converged in {info['iter']} iters; RC dispersion={info['rc_dispersion']:.2e}")
 
-# ---------------- MARKET: SCENARIO LIBRARY ----------------
+# ---------------- SCENARIO LIBRARY ----------------
 if has_market:
     st.markdown("---")
     st.header("Scenario library")
@@ -634,10 +725,14 @@ if has_market:
     tabs_s = st.tabs(["Equities −X%", "Rates +bp (duration)", "Correlations +X% (MC)"])
 
     with tabs_s[0]:
-        eqs = st.multiselect("Equity tickers", options=list(returns.columns),
-                             default=[c for c in returns.columns if c not in ["TLT","IEF","AGG","BND","EDV","ZROZ"]])
-        eq_shock = st.number_input("Equity shock (return, e.g., -0.05 = -5%)",
-                                   min_value=-1.0, max_value=1.0, value=-0.05, step=0.01)
+        eqs = st.multiselect(
+            "Equity tickers", options=list(returns.columns),
+            default=[c for c in returns.columns if c not in ["TLT", "IEF", "AGG", "BND", "EDV", "ZROZ"]]
+        )
+        eq_shock = st.number_input(
+            "Equity shock (return, e.g., -0.05 = -5%)",
+            min_value=-1.0, max_value=1.0, value=-0.05, step=0.01
+        )
         if st.button("Run equities shock"):
             loss = scenario_equities_shock(returns, weights, eqs, shock=float(eq_shock), exposure=exposure)
             st.metric("Scenario P&L (loss +ve)", f"{loss:,.0f}")
@@ -650,40 +745,49 @@ if has_market:
         cols = st.columns(min(4, max(2, len(returns.columns))))
         for i, c in enumerate(returns.columns):
             with cols[i % len(cols)]:
-                dur_inputs[c] = st.number_input(f"{c} duration", min_value=0.0,
-                                                value=18.0 if c == "TLT" else 7.0, step=0.5)
+                dur_inputs[c] = st.number_input(
+                    f"{c} duration", min_value=0.0,
+                    value=18.0 if c == "TLT" else 7.0, step=0.5
+                )
         if st.button("Run rates shock"):
             loss = scenario_rates_bp(returns, weights, durations=dur_inputs, bp=float(bp), exposure=exposure)
             st.metric("Scenario P&L (loss +ve)", f"{loss:,.0f}")
 
     with tabs_s[2]:
-        a_corr = st.number_input("Alpha for VaR/ES", min_value=0.8, max_value=0.999,
-                                 value=float(alpha), step=0.001, format="%.3f")
+        a_corr    = st.number_input("Alpha for VaR/ES", min_value=0.8, max_value=0.999,
+                                    value=float(alpha), step=0.001, format="%.3f")
         corr_bump = st.slider("Correlation bump (%)", min_value=0, max_value=200, value=50, step=5)
-        sims3 = st.number_input("MC simulations", min_value=10_000, value=50_000, step=10_000, key="sims_corr")
-        seed3 = st.number_input("Random seed", min_value=0, value=13, step=1, key="seed_corr")
+        sims3     = st.number_input("MC simulations", min_value=10_000, value=50_000, step=10_000, key="sims_corr")
+        seed3     = st.number_input("Random seed", min_value=0, value=13, step=1, key="seed_corr")
         if st.button("Run correlation bump"):
-            base, stressed = scenario_corr_bump_mc(returns, weights, alpha=float(a_corr), horizon_days=horizon,
-                                                   exposure=exposure, corr_bump_pct=float(corr_bump),
-                                                   n_sims=int(sims3), seed=int(seed3))
+            base, stressed = scenario_corr_bump_mc(
+                returns, weights, alpha=float(a_corr), horizon_days=horizon,
+                exposure=exposure, corr_bump_pct=float(corr_bump),
+                n_sims=int(sims3), seed=int(seed3)
+            )
             (var_b, es_b), (var_s, es_s) = base, stressed
             c1, c2 = st.columns(2)
             c1.metric("VaR (base)", f"{var_b:,.0f}")
             c2.metric("VaR (corr bumped)", f"{var_s:,.0f}")
             st.caption(f"ΔVaR = {var_s - var_b:,.0f}; ES base {es_b:,.0f} → stressed {es_s:,.0f}")
 
-# ---------------- REPORT EXPORT (MARKET) ----------------
+# ---------------- REPORT EXPORT ----------------
 if has_market:
     st.markdown("---")
     st.header("Report export")
+
+    tickers = list(returns.columns)
+    w_norm  = (weights / weights.sum()) if weights.sum() != 0 else weights
+    weights_t = tuple(weights.tolist())
+
+    # Re-use cached values — no recomputation
+    parts_now = _cached_var_decomp(returns, weights_t, alpha, int(horizon), exposure)
 
     summary = []
     summary.append("# Risk Report\n")
     summary.append(f"**Method:** {method_choice}\n")
     summary.append(f"**Alpha:** {alpha:.3f}   **Horizon (days):** {horizon}   **Exposure:** {exposure:,.0f}\n")
     summary.append("## Current portfolio\n")
-    tickers = list(returns.columns)
-    w_norm = (weights / weights.sum()) if weights.sum() != 0 else weights
     summary.append("| Ticker | Weight |")
     summary.append("|---|---:|")
     for t, wv in zip(tickers, w_norm):
@@ -694,7 +798,11 @@ if has_market:
 
     try:
         summary.append("\n## Backtest (Historical VaR)")
-        summary.append(f"- Window: {bt['window']}  |  OOS T: {bt['T']}  |  Exceedances: {bt['exceedances']}  |  Hit rate: {bt['hit_rate']:.4f}  |  Kupiec p: {bt['kupiec_pvalue']:.4f}")
+        summary.append(
+            f"- Window: {bt['window']}  |  OOS T: {bt['T']}  |  "
+            f"Exceedances: {bt['exceedances']}  |  Hit rate: {bt['hit_rate']:.4f}  |  "
+            f"Kupiec p: {bt['kupiec_pvalue']:.4f}"
+        )
     except Exception:
         pass
 
@@ -708,9 +816,9 @@ if has_market:
     )
 
     try:
-        parts_now = var_parametric_normal_parts(returns, weights, alpha=alpha, horizon_days=horizon, exposure=exposure)
         df_contrib = pd.DataFrame({
-            "Ticker": tickers, "Weight": w_norm,
+            "Ticker":        tickers,
+            "Weight":        w_norm,
             "Component VaR": parts_now["cVaR"],
             "Percent of VaR": parts_now["pContrib"]
         })
@@ -724,5 +832,4 @@ if has_market:
         pass
 
 st.caption("Tip: PNG exports of charts require `kaleido` (optional).")
-
 
