@@ -254,7 +254,7 @@ def fhs_var_es_next(
     long_var = float(r_p.var(ddof=1))
     sigma = garch11_filter(r_p, alpha_g=alpha_g, beta_g=beta_g, long_run_var=long_var)
     # Avoid div-by-zero
-    sigma_safe = sigma.replace(0.0, np.nan).fillna(method="bfill").fillna(method="ffill")
+    sigma_safe = sigma.replace(0.0, np.nan).bfill().ffill()
     z = (r_p / sigma_safe).dropna()
 
     qz = z.quantile(1 - alpha)
@@ -292,7 +292,7 @@ def backtest_fhs_var(
 
     long_var = float(r_p.var(ddof=1))
     sigma = garch11_filter(r_p, alpha_g=alpha_g, beta_g=beta_g, long_run_var=long_var)
-    sigma_safe = sigma.replace(0.0, np.nan).fillna(method="bfill").fillna(method="ffill")
+    sigma_safe = sigma.replace(0.0, np.nan).bfill().ffill()
 
     # Build z up to t-1; rolling quantile of z with at least window_min obs
     z = (r_p / sigma_safe).dropna()
