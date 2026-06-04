@@ -370,7 +370,7 @@ if has_market:
                 shock_pairs[t] = shock
         if st.button("Run single-name shock"):
             shock_row = apply_single_name_shocks(returns, shock_pairs)
-            port_ret = float(shock_row.values @ weights)
+            port_ret = float(shock_row.values.squeeze() @ weights)
             loss = -port_ret * exposure
             st.metric("Shocked one-day loss", f"{loss:,.0f}")
 
@@ -832,4 +832,3 @@ if has_market:
         pass
 
 st.caption("Tip: PNG exports of charts require `kaleido` (optional).")
-
