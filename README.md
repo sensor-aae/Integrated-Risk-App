@@ -1,321 +1,257 @@
-# Integrated Risk App (Python)
- 
-**Validation-Grade Market & Credit Risk Engine**
- 
-![Python](https://img.shields.io/badge/Python-3.10%2B-blue)
+# Integrated Risk App
+
+**Validation-grade market and credit risk engine**
+
+![Python](https://img.shields.io/badge/Python-3.11%2B-blue)
 ![License](https://img.shields.io/badge/License-MIT-green)
-![Status](https://img.shields.io/badge/Status-Active-brightgreen)
-[![Live App](https://img.shields.io/badge/Live%20App-Streamlit-red)](https://integrated-risk-app.onrender.com/)
- 
+![Tests](https://img.shields.io/badge/tests-129-brightgreen)
+
 ---
- 
-## 🎯 Project Objective
- 
-This project is a **model-risk–oriented risk analytics engine** designed to **measure, validate, and document** market and credit risk models in a manner consistent with institutional risk management and model validation practices.
- 
-The objective is **not** to build a trading system or dashboard-centric application, but to demonstrate:
- 
-- Sound quantitative risk methodology
-- Explicit assumptions and documented loss conventions
-- Clear separation between **model logic**, **configuration**, and **presentation**
-- Standard validation and backtesting diagnostics consistent with SR 11-7 and OSFI E-23 guidance
-This repository functions as a **model risk validation sandbox** and work sample for roles in market risk, model validation, and risk analytics.
- 
+
+## What this is
+
+A model-risk–oriented risk analytics engine that **measures, validates and
+documents** market and credit risk models the way an institutional risk function
+would.
+
+It is not a trading system and not a dashboard. The organising question is not
+"what is the number?" but "**is the number any good, and how would you know?**"
+
+Three things follow from that:
+
+- **Every published figure is reproducible.** The results in
+  [`docs/validation_results.md`](docs/validation_results.md) are generated from
+  the data committed in `data/` by `scripts/generate_validation_results.py`, and
+  CI fails if the committed results drift from what the code produces.
+- **Conventions are enforced, not documented.** VaR ≥ 0 and ES ≥ VaR are runtime
+  invariants that raise, not notes in a README.
+- **Assumptions travel with results.** `summary()` returns the risk numbers, the
+  full configuration, and the assumptions actually in force for that
+  configuration.
+
 ---
- 
-## 📌 Scope
- 
-### Market Risk
-- Value-at-Risk (VaR) and Expected Shortfall (ES)
-- Four methodologies: Historical Simulation, Parametric (Normal), Monte Carlo, Filtered Historical Simulation (GARCH-lite, fixed or MLE-estimated params)
-- Multi-confidence-level analysis (95%, 97.5%, 99%)
-- Rolling-window estimation
-- Out-of-sample backtesting: **Kupiec POF**, **Christoffersen independence**, and **joint conditional coverage** (LR_cc ~ χ²(2))
-- VaR decomposition: marginal, component, and incremental VaR (Euler allocation)
-- Equal Risk Contribution (ERC) risk budgeting
-### Credit Risk
-- Expected Loss (EL) framework: PD × LGD × EAD
-- Portfolio-level aggregation and segment-level decomposition
-- Scenario shock capability (PD multiplier, additive basis points, LGD stress)
-### Stress & Scenario Analysis
-- Single-name equity shocks
-- Interest rate shocks via duration approximation
-- Covariance scaling (volatility + correlation stress)
-- Historical window replay
+
+## Scope
+
+**Market risk** — VaR and Expected Shortfall by four methods (historical
+simulation, parametric Normal, Monte Carlo, Filtered Historical Simulation with
+a GARCH(1,1) filter); multi-α analysis; rolling out-of-sample backtesting with
+Kupiec POF, Christoffersen independence, and joint conditional coverage; Euler
+VaR decomposition (marginal and component); true incremental VaR; Equal Risk
+Contribution budgeting.
+
+**Credit risk** — Expected Loss (PD × LGD × EAD) with portfolio and segment
+aggregation, multiplicative and additive scenario shocks, and data-quality
+reporting on out-of-range inputs.
+
+**Stress and scenarios** — single-name shocks, parallel rate shocks via duration
+approximation, covariance scaling, correlation-breakdown stress with PSD
+projection, and historical window replay.
+
 ---
- 
-## 📊 Validation Results
- 
-> Results generated using a 4-asset portfolio: **SPY 25% | QQQ 25% | TLT 25% | GLD 25%**
-> **Exposure: $1,000,000 | Data: Jan 2020 – Dec 2024 | 1,258 daily observations**
-> Parameters calibrated to observed market behaviour (SPY ~19% vol, QQQ ~24%, TLT ~15%, GLD ~13%).
- 
-### Point Risk Measures — 1-Day Horizon
- 
-| Method | VaR @ 95% | ES @ 95% | VaR @ 99% | ES @ 99% |
-|---|---:|---:|---:|---:|
-| Historical Simulation | $10,305 | $13,223 | $15,516 | $16,926 |
-| Parametric (Normal) | $10,621 | $13,375 | $15,113 | $17,347 |
-| Monte Carlo (100k sims) | $10,575 | $13,312 | $15,061 | $17,231 |
-| Filtered Hist. (GARCH-lite) | $12,481 | $16,072 | $18,077 | $20,628 |
- 
-> **Interpretation:** The FHS/GARCH model produces materially higher estimates than static methods, reflecting its sensitivity to recent volatility clustering. The parametric and historical methods converge closely at 95%, diverging at 99% where distributional tail assumptions matter more. ES consistently exceeds VaR as required under the loss convention invariant enforced by the model object.
- 
----
- 
-### Backtesting — Rolling Historical VaR (250-day window)
- 
-Three tests are reported. **Kupiec POF** (unconditional coverage) tests whether exception frequency equals (1−α). **Christoffersen independence** tests whether exceptions cluster in time. **Joint conditional coverage** (LR_cc = LR_uc + LR_ind ~ χ²(2)) combines both.
- 
-| α | OOS (T) | Exceed. | Hit % | Exp % | Kupiec LR | p | Christ. LR | p | Joint LR | p | Result |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
-| 95.0% | 1,008 | 59 | 5.85% | 5.00% | 1.468 | 0.2257 | 0.092 | 0.7614 | 1.560 | 0.4584 | ✅ PASS |
-| 97.5% | 1,008 | 27 | 2.68% | 2.50% | 0.129 | 0.7196 | 0.100 | 0.7520 | 0.229 | 0.8919 | ✅ PASS |
-| 99.0% | 1,008 | 15 | 1.49% | 1.00% | 2.109 | 0.1464 | 0.454 | 0.5006 | 2.563 | 0.2776 | ✅ PASS |
- 
-> **Interpretation:** All three confidence levels pass all three tests at the 5% significance level. The Christoffersen independence test is particularly important: it detects whether exceptions cluster in time — a failure mode invisible to Kupiec alone. High p-values on the independence test (0.50–0.76) confirm exceptions are well-distributed across the sample period, not concentrated during stress events. The joint conditional coverage test combines both criteria; all p-values are well above 0.05.
- 
----
- 
-### VaR Decomposition — Component VaR (Normal, α=95%)
- 
-| Asset | Weight | Component VaR | % of Portfolio VaR |
-|---|---:|---:|---:|
-| SPY | 25.0% | $3,913 | 36.8% |
-| QQQ | 25.0% | $5,005 | 47.1% |
-| TLT | 25.0% | $409 | 3.9% |
-| GLD | 25.0% | $1,294 | 12.2% |
-| **Total** | **100%** | **$10,621** | **100.0%** |
- 
-> **Interpretation:** Despite equal weighting, QQQ contributes ~47% of total VaR due to its higher volatility (~23% annualised) and strong co-movement with SPY (ρ = 0.86). TLT's negative correlation with equities (ρ = −0.30 with SPY) reduces its risk contribution to under 4% of the portfolio total — a meaningful diversification effect. Component VaR sums to portfolio VaR under the Euler allocation.
- 
----
- 
-### Stress Scenarios
- 
-| Scenario | Description | Portfolio Impact |
-|---|---|---:|
-| Equity shock | SPY + QQQ each −20%, TLT/GLD flat | **−$100,000** |
-| Rate shock | +200bp parallel shift, TLT duration 18y | **−$90,000** |
-| Vol/correlation stress | Covariance matrix ×2 | VaR: $10,575 → $15,246 (**+$4,671**) |
- 
----
- 
-### Portfolio Summary Statistics
- 
-| Metric | Value |
-|---|---|
-| Annualised Return | 5.57% |
-| Annualised Volatility | 10.46% |
-| Sharpe Ratio (RF = 0) | 0.53 |
-| SPY annualised vol | 18.55% |
-| QQQ annualised vol | 23.02% |
-| TLT annualised vol | 15.18% |
-| GLD annualised vol | 12.94% |
- 
-### Asset Correlation Matrix
- 
-|  | SPY | QQQ | TLT | GLD |
-|---|---:|---:|---:|---:|
-| SPY | 1.000 | 0.859 | −0.302 | 0.072 |
-| QQQ | 0.859 | 1.000 | −0.251 | 0.038 |
-| TLT | −0.302 | −0.251 | 1.000 | 0.089 |
-| GLD | 0.072 | 0.038 | 0.089 | 1.000 |
- 
----
- 
-## ⚠️ Known Model Limitations
- 
-This section documents known weaknesses, as required under institutional model risk standards (SR 11-7 / OSFI E-23). Resolved items are retained for transparency and audit trail.
- 
-**1. ~~Unconditional coverage only~~ — ✅ Resolved**
-~~The backtesting framework implements Kupiec POF only.~~
-`risklib/market/backtest.py` now implements the full **Christoffersen (1998)** test suite: `christoffersen_independence()` tests H₀ that exceptions are serially independent (no clustering), and `joint_coverage_test()` combines Kupiec and Christoffersen into the joint conditional coverage statistic LR_cc ~ χ²(2). All three tests are returned by `backtest_var_historical()` and displayed in the validation results above.
- 
-**2. IID and stationarity assumptions**
-All methods assume i.i.d. returns within the rolling window and stationarity of the return distribution. These assumptions are violated during volatility regime changes. The GARCH-lite filter partially addresses this for the FHS method only.
- 
-**3. ~~Fixed GARCH parameter estimation~~ — ✅ Resolved**
-~~The GARCH(1,1) filter uses fixed parameters (α = 0.05, β = 0.94) rather than MLE-estimated parameters.~~
-`risklib/market/garch_mle.py` now provides `fit_garch11_mle()` and `garch11_filter_mle()`, implementing MLE estimation via `scipy.optimize` (L-BFGS-B, multiple restarts). Parameters are estimated in unconstrained space with transformations enforcing stationarity (α + β < 1). Enabled via `fit_garch=True` in `MarketRiskConfig` — default `False` preserves existing behaviour. Validation on simulated data with known parameters (α=0.08, β=0.91) showed MLE error on α of 8.3% vs 37.5% for fixed defaults, and a sigma path 1.36pp more correlated with the true conditional volatility path.
- 
-**4. Multivariate normality (Monte Carlo)**
-The Monte Carlo method assumes a multivariate normal distribution for joint asset returns. Empirical return distributions exhibit excess kurtosis and negative skewness, meaning tail losses are likely underestimated at high confidence levels (99%+).
- 
-**5. 1-day horizon scaling**
-Multi-day VaR is approximated via square-root-of-time scaling (√h). This assumption holds only if returns are i.i.d. normal — it underestimates risk when volatility is autocorrelated.
- 
-**6. Credit model scope**
-The credit EL framework computes point-in-time Expected Loss using user-supplied PD/LGD/EAD inputs. It does not estimate PD from historical default data (e.g. via logistic regression or scorecard), does not model loss distributions (only expected values), and does not compute Unexpected Loss or Economic Capital.
- 
----
- 
-## 🧱 Repository Structure
- 
-```
-risklib/
-  market/
-    market_risk_model.py     # MarketRiskModel class + MarketRiskConfig (fit_garch flag)
-    market.py                # Risk primitives: VaR, ES, backtest, GARCH, ERC
-    backtest.py              # Kupiec + Christoffersen + joint conditional coverage tests
-    garch_mle.py             # MLE GARCH(1,1) estimation (scipy.optimize, L-BFGS-B)
-  credit/
-    credit_risk_model.py     # EL pipeline: validate → shock → compute → summarize
-risk_engine/                 # Thin wrappers used by Streamlit app
-app/
-  app.py                     # Streamlit UI — presentation only, no risk logic
-docs/
-  model_report.md            # Full model methodology and validation notes
-tests/                       # Unit tests for model invariants
-notebooks/                   # Exploratory analysis
-```
- 
-### Design Principles
- 
-- **`risklib/` is the source of truth** — All modelling, estimation, and validation logic lives here
-- **`app/` is presentation-only** — The UI calls `risklib` and visualizes outputs; it computes nothing directly
-- **Loss-based convention enforced** — All outputs are positive loss amounts; the `MarketRiskModel` raises if VaR < 0 or ES < VaR
----
- 
-## 🔍 Market Risk Model
- 
-```python
-from risklib.market.market_risk_model import MarketRiskModel, MarketRiskConfig
- 
-# Standard FHS with fixed GARCH params (default)
-cfg = MarketRiskConfig(
-    alpha=0.99,
-    method="fhs",
-    horizon_days=1,
-    exposure=1_000_000,
-)
- 
-# FHS with MLE-estimated GARCH params (data-driven)
-cfg_mle = MarketRiskConfig(
-    alpha=0.99,
-    method="fhs",
-    horizon_days=1,
-    exposure=1_000_000,
-    fit_garch=True,          # estimates omega, alpha, beta via MLE
-)
- 
-model = MarketRiskModel(returns, weights, cfg)
-model.fit()
- 
-var = model.compute_var()    # e.g. 18,077
-es  = model.compute_es()     # e.g. 20,628
-summary = model.summary()    # includes assumptions, config metadata
-```
- 
-The `MarketRiskModel` enforces two invariants at `fit()` time:
-- `VaR >= 0` (loss convention)
-- `ES >= VaR` (coherence requirement)
-A `ValueError` is raised if either condition is violated, surfacing methodology errors early.
- 
----
- 
-## 🧪 Validation & Testing
- 
-Unit tests verify model invariants independently of data:
- 
-- VaR monotonicity across confidence levels (VaR₉₉ > VaR₉₅)
-- ES ≥ VaR under consistent loss convention
-- Correct exception counting in rolling backtests
-- Credit EL aggregation consistency (sum of facility EL = portfolio EL)
-- Component VaR sums to portfolio VaR under Euler allocation
-Backtesting is conducted **out-of-sample** using a trailing window to prevent look-ahead bias. The VaR threshold at time *t* is estimated from returns up to *t−1* only.
- 
----
- 
-## 🧠 Methodology
- 
-| Model | Formula | Notes |
-|---|---|---|
-| VaR (Historical) | −Q₁₋ₐ(r_p) × exposure | Empirical quantile of portfolio returns |
-| VaR (Parametric) | (−μ_p + z_α × σ_p) × exposure | Assumes normality |
-| ES (Parametric) | (−μ_p + σ_p × φ(z_α)/(1−α)) × exposure | Closed-form under normality |
-| VaR (Monte Carlo) | Empirical quantile of 100k simulated paths | Multivariate normal with covariance shrinkage |
-| VaR (FHS) | −q_z × σ_{t+1} × exposure | GARCH-standardised residuals, one-step-ahead forecast; σ estimated by MLE or fixed params |
-| Expected Loss | PD × LGD × EAD | Per-facility; aggregated to portfolio/segment level |
- 
----
- 
-## 🚫 Out of Scope (By Design)
- 
-This project does **not** attempt to be:
-- A trading or portfolio optimisation system
-- A real-time production risk engine
-- A regulatory-approved model
-Deferred extensions: factor models, ALM, CVA, portfolio optimisation, multi-step GARCH forecasting.
- 
----
- 
-## 🖥 Application Interface
- 
-A live **Streamlit app** is deployed at **[integrated-risk-app.onrender.com](https://integrated-risk-app.onrender.com/)**.
- 
-The UI allows a user to:
-- Upload a prices CSV or exposures CSV
-- Select method, confidence level, horizon, and exposure
-- View VaR/ES point estimates, backtest chart with exception markers, Kupiec results
-- Run stress scenarios and what-if weight analysis
-- Export a Markdown risk report and CSV decompositions
-All modelling logic remains in `risklib/`. The app is a viewer only.
- 
----
- 
-## ⚙️ Tech Stack
- 
-| Layer | Libraries |
-|---|---|
-| Risk engine | NumPy, Pandas, SciPy, Statsmodels |
-| Visualisation | Plotly |
-| UI | Streamlit |
-| Data (demo) | yfinance |
-| Tests | pytest |
- 
----
- 
-## ⚡ Quickstart
- 
+
+## Quickstart
+
 ```bash
 git clone https://github.com/sensor-aae/Integrated-Risk-App.git
 cd Integrated-Risk-App
- 
+
 python -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
- 
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
+
 streamlit run app/app.py
 ```
- 
+
+Upload `data/market_data.csv` for market risk and `data/credit_example.csv` for
+credit. To reproduce every published number:
+
+```bash
+pip install -r requirements-dev.txt
+pytest -q
+python scripts/generate_validation_results.py
+```
+
 ---
- 
-## 📄 Documentation
- 
-A full **Model Risk Report** (`docs/model_report.md`) covers:
-- Methodology and theoretical basis
-- Assumptions and their implications
-- Validation results and test statistics
-- Known limitations and areas for improvement
-This mirrors institutional model documentation standards.
- 
+
+## Using the engine directly
+
+```python
+import numpy as np
+from risklib.data import load_prices, to_returns
+from risklib.market import MarketRiskConfig, MarketRiskModel, backtest_var_historical
+
+returns = to_returns(load_prices("data/market_data.csv"), method="log")
+weights = np.ones(returns.shape[1]) / returns.shape[1]
+
+cfg = MarketRiskConfig(
+    alpha=0.99,
+    method="fhs",          # historical | parametric | monte_carlo | fhs
+    horizon_days=1,
+    exposure=1_000_000,
+    fit_garch=True,        # estimate omega, alpha, beta by MLE
+)
+
+model = MarketRiskModel(returns, weights, cfg).fit()
+
+model.compute_var()        # positive loss amount
+model.compute_es()
+model.summary()            # VaR, ES, full config, assumptions in force
+model.fit_info_["source"]  # "MLE" or "fixed" — estimated vs assumed
+
+bt = backtest_var_historical(returns, weights, alpha=0.99, window=250)
+bt["kupiec_pvalue"], bt["christoffersen_pvalue"], bt["joint_pvalue"]
+```
+
+`MarketRiskConfig` carries every parameter that changes a number — confidence
+level, horizon, exposure, backtest window, Monte Carlo paths and seed,
+covariance shrinkage, and the GARCH settings. It is one serialisable object you
+can log, diff and attach to a result, which is the difference between "we ran a
+VaR" and "we ran *this* VaR".
+
 ---
- 
-## ⭐ Why This Project Exists
- 
-This repository is designed as a **work sample** for roles in:
- 
-- Market Risk
-- Model Risk / Model Validation
-- Credit Risk Analytics
-- Pension & Institutional Investment Risk
-- Risk Consulting
-It reflects how quantitative risk models are **built, tested, challenged, and reviewed** — not just how they are computed.
- 
+
+## Repository structure
+
+```
+risklib/                          # single source of truth for all modelling
+  data.py                         # ingestion: prices -> returns
+  market/
+    market_risk_model.py          # estimators, MarketRiskConfig, MarketRiskModel
+    backtest.py                   # Kupiec + Christoffersen + joint CC; both backtests
+    garch.py                      # one GARCH(1,1) recursion: fixed and MLE
+    extras.py                     # Euler decomposition, incremental VaR, ERC
+    scenarios.py                  # stress testing and scenario library
+  credit/
+    credit_risk_model.py          # EL pipeline: validate -> shock -> compute -> summarise
+
+app/app.py                        # Streamlit interface — presentation only
+scripts/
+  generate_validation_results.py  # regenerates docs/validation_results.md
+docs/
+  model_report.md                 # methodology, assumptions, limitations
+  validation_results.md           # GENERATED — do not edit by hand
+tests/                            # 129 tests
+data/                             # demo market and credit data
+```
+
+**Design rules**
+
+- `risklib/` holds all modelling, estimation and validation logic
+- `app/` computes nothing — it collects inputs, calls `risklib`, and visualises
+- Losses are positive throughout, enforced at `fit()` time
+
 ---
- 
-## ⚠️ Disclaimer
- 
-This project is for educational and demonstrative purposes only. It is **not** intended for production use or investment decision-making. All results shown are generated from simulated data calibrated to approximate market conditions; they do not constitute forecasts.
- 
+
+## Validation results
+
+Full tables — point measures, GARCH parameter comparison, backtests across three
+confidence levels, Euler decomposition, ERC, stress scenarios, and credit EL —
+are in **[`docs/validation_results.md`](docs/validation_results.md)**, generated
+from the shipped demo portfolio (AAPL / TLT / MSFT, equal-weighted, $1,000,000
+exposure, 1,257 daily observations from January 2020 to December 2024).
+
+A few results worth calling out:
+
+**All three tests pass at every confidence level**, for both the historical and
+FHS backtests. The independence p-values are the interesting ones — they confirm
+exceptions are distributed across the sample rather than concentrated in stress
+periods, which Kupiec alone cannot detect.
+
+**Estimated GARCH parameters differ materially from the convention.** The fixed
+defaults (α = 0.05, β = 0.94) imply persistence of 0.9900; MLE estimates 0.9665
+on this sample. The assumed parameters overstate volatility persistence, which
+is exactly the misspecification the MLE path exists to address.
+
+**Component VaR sums to portfolio VaR to 3.6 × 10⁻¹²** — the Euler identity is
+exact, not approximate, because VaR is homogeneous of degree 1 in the weights.
+
+**ERC substantially rebalances the book.** Under equal weighting the two equities
+contribute 93% of portfolio VaR between them; ERC moves the bond from 33% to 54%
+of the portfolio and cuts VaR by roughly 20%.
+
+---
+
+## Validation and testing
+
+129 tests. The suite asserts **model invariants** rather than frozen numbers, so
+the assertions hold for any input and do not break when a default changes.
+
+The test worth reading is `test_christoffersen_rejects_clustering`. It builds an
+exception series with the **correct total count** but bunched into one contiguous
+block, then asserts that Kupiec passes it with p > 0.9 and Christoffersen rejects
+it at p < 0.001. That contrast is the entire argument for implementing the
+independence test.
+
+Also covered: no-look-ahead verification (the threshold at *t* is recomputed by
+hand from *t−1* and compared), GARCH MLE parameter recovery on simulated data,
+the Euler summation identity, credit EL aggregation consistency, and a
+contract-test file pinning every dictionary key the Streamlit app reads — so a
+rename in the engine fails in CI rather than in front of a user.
+
+CI runs the suite on Python 3.11 and 3.12, verifies the package installs cleanly,
+and re-runs the validation script to confirm the published results still
+reproduce.
+
+---
+
+## Methodology summary
+
+| Model | Formula | Notes |
+|---|---|---|
+| VaR (historical) | −Q₁₋α(r_p) × E | Empirical quantile; no distributional assumption |
+| VaR (parametric) | (−μ_p + z_α σ_p) × E | Closed form under normality |
+| ES (parametric) | (−μ_p + σ_p φ(z_α)/(1−α)) × E | Closed-form tail expectation |
+| VaR (Monte Carlo) | Empirical quantile of simulated paths | Multivariate normal, covariance shrinkage |
+| VaR (FHS) | −q_z × σ_{t+1} × E | GARCH-standardised residuals, one-step-ahead |
+| Component VaR | w_i · ∂VaR/∂w_i | Euler allocation; sums exactly to portfolio VaR |
+| Expected Loss | PD × LGD × EAD | Per facility, aggregated to segment and portfolio |
+
+Full derivations, assumptions and limitations: **[`docs/model_report.md`](docs/model_report.md)**.
+
+---
+
+## Known limitations
+
+Documented in full in [`docs/model_report.md`](docs/model_report.md#6-assumptions-and-limitations),
+with resolved items retained as an audit trail. The open ones:
+
+- i.i.d. and stationarity assumptions, violated across volatility regime changes
+- Multivariate normality in Monte Carlo understates tails at high confidence
+- √h horizon scaling understates risk when volatility is autocorrelated
+- The rolling FHS backtest retains fixed GARCH parameters
+- Zero conditional mean in the GARCH filter
+- Duration approximation ignores convexity
+- Credit model computes Expected Loss only — no loss distribution, no economic capital
+- Results derive from a single demo portfolio and demonstrate reproducibility,
+  not general model performance
+
+---
+
+## Out of scope by design
+
+Trading and portfolio optimisation, real-time production risk, regulatory capital
+calculation. Deferred: factor models, ALM, CVA, copula simulation, PD estimation
+from default history, multi-step GARCH forecasting.
+
+---
+
+## Tech stack
+
+| Layer | Libraries |
+|---|---|
+| Engine | NumPy, pandas, SciPy |
+| Interface | Streamlit, Plotly |
+| Tests | pytest |
+
+The core VaR and backtesting math depends on neither SciPy nor statsmodels —
+Normal quantiles come from `statistics.NormalDist` and χ² p-values from exact
+closed forms (`erfc(√(x/2))` for one degree of freedom, `exp(−x/2)` for two).
+SciPy is required only for GARCH maximum likelihood.
+
+---
+
+## Disclaimer
+
+Educational and demonstrative. Not intended for production use or investment
+decision-making, and not a regulatory-approved model.

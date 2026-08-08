@@ -1,4 +1,10 @@
-pandas
-numpy
-plotly
-streamlit
+# Runtime dependencies for the Streamlit app and risklib engine.
+#
+# scipy is REQUIRED: risklib/market/garch.py uses scipy.optimize for GARCH MLE.
+# It was previously missing here, so the MLE path would ImportError on any fresh
+# deploy (Streamlit Community Cloud and CI both install from this file).
+numpy>=1.24
+pandas>=2.0
+scipy>=1.10
+plotly>=5.18
+streamlit>=1.30

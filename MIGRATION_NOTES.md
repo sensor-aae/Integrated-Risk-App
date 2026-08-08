@@ -1,94 +1,134 @@
-# Migration Plan (Recruiter-Efficient): From "App With Features" → "Model Risk Validation Sandbox"
+# Migration Record: "App With Features" → Model Risk Validation Sandbox
 
-## Objective (North Star)
-Turn the repo into a **validation-ready risk engine** where:
-- the **engine** is the source of truth (VaR/ES/EL),
-- the **backtesting module** validates model behavior,
-- the **Streamlit app** only displays outputs (no math in the UI).
-
-This migration is intentionally minimal: move only what increases credibility for **pensions / model validation / risk boutiques**.
+**Status: complete (v0.2).** This began as a plan; it is retained as a record of
+what was decided, what was executed, and where the plan was deliberately
+overruled.
 
 ---
 
-## Step B — Decide What Stays vs What Moves (One-Time)
+## Objective
 
-### ✅ MOVES into `risklib/market/market_risk_model.py` (Risk Measurement Layer)
-Move all functions that answer: **"What is the risk number?"**
+Turn the repository into a validation-ready risk engine where:
 
-- Historical VaR / ES logic
-- Parametric (Normal) VaR / ES logic
-- Monte Carlo VaR / ES logic
-- Filtered Historical (GARCH-lite / FHS) VaR / ES logic
-- Supporting utilities required by those methods (only if used by the above)
-
-**Rule:** VaR and ES must be reported as **positive loss numbers** (single loss convention).
+- the **engine** is the source of truth for VaR / ES / EL,
+- the **validation layer** evaluates whether the model works,
+- the **Streamlit app** only displays outputs and computes nothing.
 
 ---
 
-### ✅ MOVES into `risklib/market/backtest.py` (Validation Layer)
-Move all functions that answer: **"Did the model work?"**
+## What moved
 
-- Kupiec POF test
-- Rolling backtest loop (build VaR series over time)
-- Exception counting (losses > VaR)
-- Backtest summary outputs (exceptions, expected, p-values)
+### Into `risklib/market/market_risk_model.py` — measurement
 
-**Rule:** The app should call backtest functions and display tables/plots—**not implement backtesting itself**.
+Everything answering *"what is the risk number?"*: historical, parametric,
+Monte Carlo and FHS VaR/ES, plus `MarketRiskConfig` and `MarketRiskModel`.
+
+**Rule applied:** VaR and ES are reported as positive loss amounts under a single
+convention, enforced at `fit()` time.
+
+### Into `risklib/market/backtest.py` — validation
+
+Everything answering *"did the model work?"*: Kupiec POF, Christoffersen
+independence, joint conditional coverage, the rolling historical backtest and
+the rolling FHS backtest.
+
+**Rule applied:** the app calls these and renders the output; it does not
+implement backtesting. The app previously carried its own third copy of the
+Kupiec p-value inline — that has been removed.
+
+### Into `risklib/market/garch.py` — volatility
+
+The GARCH(1,1) recursion existed in **three** places with subtly different
+initialisation. There is now exactly one `variance_path`; the fixed-parameter
+and MLE paths differ only in how they obtain (ω, α, β) before calling it.
+
+### Into `risklib/market/extras.py` — attribution
+
+Euler decomposition, incremental VaR and ERC budgeting.
+
+### Into `risklib/market/scenarios.py` — stress
+
+`stress.py` and `scenarios.py` were merged. They had drifted into two
+**incompatible conventions** for the same question: one held unshocked
+instruments flat, the other carried their last observed return. Flat is now the
+single default; the alternative is opt-in and reported in the output.
+
+### Into `risklib/credit/credit_risk_model.py` and `risklib/data.py`
+
+The credit EL pipeline and data ingestion, unchanged in intent.
 
 ---
 
-### ✅ STAYS (for now) — but must not recompute risk
-These can remain in place while we stabilize the engine:
+## What was removed
 
-- Streamlit UI layout and charting (Plotly / Streamlit elements)
-- Data loading (e.g., yfinance, CSV demos)
+**`risk_engine/` — deleted entirely.** It was documented as "thin wrappers" but
+was in fact a complete second implementation: twelve core functions duplicated,
+with divergent signatures. Only the `risklib` copy accepted `fit_garch`, which
+is how that parameter came to be silently inert.
 
-**Rule:** UI/plots may visualize VaR/ES, but must **never recompute** VaR/ES internally.
+A consequence worth recording: `app.py` imported `backtest_var_historical` from
+*both* modules, and got the three-test version only because of import line
+ordering. Reordering those two lines would have silently reduced the app to
+Kupiec alone and then crashed on a missing key. That class of accident is now
+structurally impossible.
 
----
-
-### ❌ REMOVE or DEPRECATE (Out of scope for the North Star)
-These reduce clarity and create "doing too much" signals.
-
-- Duplicate VaR implementations with inconsistent conventions
-- Any `abs()` band-aids used to fix sign issues
-- Any risk calculations performed inside `app/app.py`
-- Extra features not required for validation sandbox V1 (e.g., ERC weights, marginal VaR decomposition)
-
-**Rule:** If it’s not part of "measure → validate → document", it moves to `extras.py` or is marked deprecated.
+Also removed: the duplicate CI workflow (whose 3.9/3.10 matrix contradicted
+`requires-python = ">=3.11"`), the stale second copy of the model report, the
+triple-nested `notebooks/notebooks/notebooks/` path, and a committed CSV output
+artifact.
 
 ---
 
-## Definition of Done (What a model-risk reviewer expects)
-- One loss convention (losses positive)
-- ES ≥ VaR (tested)
-- 99% VaR ≥ 95% VaR (tested)
-- Backtest returns exceptions, expected exceptions, Kupiec p-value
-- `app/app.py` calls the engine; it does not compute risk
+## Where the plan was overruled
 
-# Migration Map: risk_engine/market.py → risklib/
+The original plan listed ERC weights and marginal VaR decomposition as **out of
+scope for V1**, to be deprecated into `extras.py`.
 
-## Move to `risklib/market/market_risk_model.py` (Measurement)
-- portfolio_returns
-- var_parametric
-- es_parametric
-- var_historical
-- es_historical
-- _cov_shrink
-- var_es_monte_carlo
-- garch11_filter
-- garch11_forecast_sigma_next
-- fhs_var_es_next
+**Decision: kept, and promoted.** Portfolio-level attribution is the output a
+risk committee actually acts on — it is what converts "portfolio VaR is $19,929"
+into "the two equities are 93% of your risk on a 67% weight". The Euler identity
+also gives the test suite one of its sharpest assertions, since component VaR
+must sum to portfolio VaR to machine precision. They live in `extras.py` as the
+plan specified, but as a supported part of the engine rather than a deprecation
+holding pen.
 
-## Move to `risklib/market/backtest.py` (Validation)
-- kupiec_pof
-- backtest_var_historical
-- backtest_fhs_var
-- (optional) backtest_var utility wrapper
+Incremental VaR was additionally **corrected** during the move: the previous
+implementation returned component VaR under that name. True incremental VaR is a
+discrete recomputation (remove the position, renormalise the rest), and the two
+differ materially on any position of size. Both are now reported side by side.
 
-## Move to `risklib/market/extras.py` (Out of Scope for V1)
-- var_parametric_normal_parts
-- incremental_var_normal
-- erc_weights_from_cov
-- erc_weights
-- normalize_weights / _normalize_weights (keep one)
+---
+
+## Definition of done
+
+| Criterion | Status |
+|---|---|
+| One loss convention, losses positive | Enforced as a runtime invariant |
+| ES ≥ VaR | Tested for all four methods |
+| VaR₉₉ ≥ VaR₉₅ | Tested for all four methods |
+| Backtest returns exceptions, expected exceptions, Kupiec p | Plus Christoffersen and joint CC |
+| `app/app.py` calls the engine and computes nothing | Inline Kupiec removed; contract-tested |
+| No duplicate implementations | `risk_engine/` deleted; single GARCH recursion |
+| Published results reproducible | Generated by script, verified in CI |
+| Test coverage | 5 tests → 129 tests |
+
+---
+
+## Bugs surfaced by the migration
+
+Consolidation exposed defects that the duplication had been hiding:
+
+1. `fit_garch=True` was inert — never forwarded from config to estimator
+2. Monte Carlo `n_sims` / `seed` / shrinkage were collected but never reached the computation
+3. `assumptions()` reported "fixed-parameter GARCH" even under MLE
+4. `load_prices` mutated its frame while iterating its own column index
+5. Rate shocks applied a 7-year default duration to equities
+6. Portfolio EL/EAD was an equal-weighted mean of ratios, inconsistent with its own subtotals
+7. The FHS backtest derived ω from the full sample, contaminating every threshold
+8. Correlation bumping could push the matrix outside the PSD cone
+9. ERC clipped weights and then renormalised, violating the stated cap
+10. GARCH log-likelihood, AIC and BIC omitted the 2π constant
+11. Currency parsing silently stopped working under pandas 3.0's dedicated string dtype
+
+Items 9 and 11 were found by tests written during the migration, not by reading
+the code — which is the argument for writing them.

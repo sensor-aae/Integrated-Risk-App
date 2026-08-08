@@ -4,20 +4,31 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "integrated-risk-app"
-version = "0.1.0"
+version = "0.2.0"
+description = "Validation-grade market and credit risk engine"
+readme = "README.md"
 requires-python = ">=3.11"
+license = { text = "MIT" }
+
 dependencies = [
-  "streamlit",
-  "pandas",
-  "numpy",
-  "plotly",
-  "yfinance",
-  "scipy",
-  "statsmodels",
-  "matplotlib",
-  "pytest"
+  "numpy>=1.24",
+  "pandas>=2.0",
+  "scipy>=1.10",
+  "plotly>=5.18",
+  "streamlit>=1.30",
 ]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.4", "pytest-cov>=4.1", "flake8>=6.0"]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["risk_engine*"]
+# `risklib` was previously EXCLUDED here (the include list named only
+# `risk_engine*`), so `pip install .` produced an installation in which every
+# `from risklib...` import failed.
+include = ["risklib*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+filterwarnings = ["error::DeprecationWarning:risklib.*"]
