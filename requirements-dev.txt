@@ -1,0 +1,5 @@
+# Development and CI dependencies.
+-r requirements.txt
+pytest>=7.4
+pytest-cov>=4.1
+flake8>=6.0

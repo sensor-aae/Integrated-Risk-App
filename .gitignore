@@ -18,3 +18,8 @@ data/*
 !data/market_data.csv
 !data/credit_example.csv
 *.egg-info/
+
+# Build artifacts
+build/
+dist/
+.pytest_cache/
